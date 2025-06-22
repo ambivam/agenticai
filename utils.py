@@ -100,21 +100,30 @@ def create_sidebar_info():
         - **Chunk Size**: 1000 tokens
         """)
 
-def validate_file_upload(uploaded_file, max_size: int, supported_formats: List[str]) -> tuple:
+def validate_file_upload(uploaded_file, max_size: int, supported_formats: List[str] = None) -> tuple:
     """Validate uploaded file"""
     if uploaded_file is None:
         return False, "No file uploaded"
     
-    # Check file size
-    if uploaded_file.size > max_size:
-        return False, f"File size exceeds maximum limit of {format_file_size(max_size)}"
-    
-    # Check file format
-    file_extension = uploaded_file.name.split('.')[-1].lower()
-    if file_extension not in supported_formats:
-        return False, f"Unsupported file format. Supported formats: {', '.join(supported_formats)}"
-    
-    return True, "File validation successful"
+    try:
+        # Check file size
+        if uploaded_file.size > max_size:
+            return False, f"File size exceeds maximum limit of {format_file_size(max_size)}"
+        
+        # Check if file is empty
+        if uploaded_file.size == 0:
+            return False, f"File {uploaded_file.name} is empty"
+        
+        # Check file format if supported_formats is provided
+        if supported_formats:
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+            if file_extension not in supported_formats:
+                return False, f"Unsupported file format. Supported formats: {', '.join(supported_formats)}"
+        
+        return True, "File validation successful"
+        
+    except Exception as e:
+        return False, f"Error validating file {uploaded_file.name}: {str(e)}"
 
 def format_file_size(size_bytes: int) -> str:
     """Format file size in human readable format"""
@@ -189,24 +198,7 @@ def create_sidebar_info():
         4. View sources and explore the knowledge base
         """)
 
-def validate_file_upload(uploaded_file, max_size: int) -> bool:
-    """Validate uploaded file"""
-    try:
-        # Check file size
-        if uploaded_file.size > max_size:
-            display_error_message(f"File {uploaded_file.name} is too large. Maximum size is {format_file_size(max_size)}")
-            return False
-        
-        # Check if file is empty
-        if uploaded_file.size == 0:
-            display_error_message(f"File {uploaded_file.name} is empty")
-            return False
-        
-        return True
-        
-    except Exception as e:
-        display_error_message(f"Error validating file {uploaded_file.name}: {str(e)}")
-        return False
+
 
 def format_file_size(size_bytes: int) -> str:
     """Format file size in bytes to human readable format"""
