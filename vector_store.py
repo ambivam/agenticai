@@ -20,8 +20,7 @@ class VectorStoreManager:
         self.vector_db_path = vector_db_path
         self.embeddings = OpenAIEmbeddings(
             openai_api_key=openai_api_key,
-            model="text-embedding-3-small",
-            openai_api_base="https://apps.abacus.ai/v1"
+            model="text-embedding-3-small"
         )
         self.vector_store = None
         self.document_metadata = {}

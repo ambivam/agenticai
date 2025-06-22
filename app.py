@@ -40,21 +40,67 @@ def initialize_session_state():
     if 'processing_status' not in st.session_state:
         st.session_state.processing_status = {}
 
+def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manager: VectorStoreManager):
+    """Handle document upload interface"""
+    st.header("📁 Document Upload")
+    st.markdown("Upload your documents to build the knowledge base. Supported formats: " + ", ".join(Config.SUPPORTED_FORMATS))
+    
+    # File uploader
+    uploaded_files = st.file_uploader(
+        "Choose files",
+        accept_multiple_files=True,
+        type=Config.SUPPORTED_FORMATS,
+        key="file_uploader"
+    )
+    
+    if uploaded_files:
+        # Process button
+        if st.button("📝 Process Documents", type="primary"):
+            with st.spinner("🔄 Processing documents..."):
+                for uploaded_file in uploaded_files:
+                    try:
+                        # Validate file
+                        if not validate_file_upload(uploaded_file, Config.MAX_FILE_SIZE):
+                            continue
+                        
+                        # Process document
+                        st.info(f"Processing {uploaded_file.name}...")
+                        documents = doc_processor.process_file(uploaded_file)
+                        
+                        # Add to vector store
+                        if documents:
+                            if vector_store_manager.add_documents(documents):
+                                st.session_state.documents_processed.append(uploaded_file.name)
+                                st.session_state.vector_store_initialized = True
+                                display_success_message(f"Successfully processed {uploaded_file.name}")
+                            else:
+                                display_error_message(f"Failed to add {uploaded_file.name} to vector store")
+                        else:
+                            display_warning_message(f"No content extracted from {uploaded_file.name}")
+                            
+                    except Exception as e:
+                        display_error_message(f"Error processing {uploaded_file.name}: {str(e)}")
+                        continue
+    
+    # Show processed documents
+    if st.session_state.documents_processed:
+        st.markdown("### 📂 Processed Documents")
+        for doc in st.session_state.documents_processed:
+            st.write(f"- {doc}")
+    else:
+        st.info("No documents processed yet")
+
 def main():
     """Main application function"""
-    
-    # Setup custom CSS
-    create_custom_css()
     
     # Initialize session state
     initialize_session_state()
     
-    # Create sidebar
-    create_sidebar_info()
+    # Create custom CSS
+    create_custom_css()
     
-    # Main header
-    st.markdown('<h1 class="main-header">🤖 Agentic RAG Assistant</h1>', unsafe_allow_html=True)
-    st.markdown("---")
+    # Create sidebar info
+    create_sidebar_info()
     
     # Check OpenAI API key
     if not Config.OPENAI_API_KEY:
