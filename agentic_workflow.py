@@ -2,6 +2,7 @@
 import json
 from typing import Dict, List, Any, Optional, TypedDict
 from langchain_openai import ChatOpenAI
+from config import Config
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
@@ -27,9 +28,9 @@ class AgenticWorkflow:
     def __init__(self, openai_api_key: str, vector_store_manager):
         self.llm = ChatOpenAI(
             openai_api_key=openai_api_key,
-            model="gpt-4-1106-preview",
+            model=Config.OPENAI_MODEL,
             temperature=0.1,
-            openai_api_base="https://apps.abacus.ai/v1"
+            base_url=Config.OPENAI_BASE_URL
         )
         self.vector_store_manager = vector_store_manager
         self.workflow = self._create_workflow()

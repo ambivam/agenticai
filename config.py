@@ -8,9 +8,9 @@ load_dotenv()
 class Config:
     """Configuration settings for the Agentic RAG application"""
     
-    # OpenAI Configuration (using AbacusAI API)
-    OPENAI_API_KEY = os.getenv("ABACUSAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-    OPENAI_BASE_URL = "https://apps.abacus.ai/v1"
+    # OpenAI Configuration
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+    OPENAI_BASE_URL = "https://api.openai.com/v1"  # Default OpenAI API endpoint
     OPENAI_MODEL = "gpt-4-1106-preview"
     OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
     

@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import streamlit as st
 from langchain.schema import Document
 from langchain_openai import OpenAIEmbeddings
+from config import Config
 from langchain_community.vectorstores import FAISS
 import logging
 
@@ -20,7 +21,8 @@ class VectorStoreManager:
         self.vector_db_path = vector_db_path
         self.embeddings = OpenAIEmbeddings(
             openai_api_key=openai_api_key,
-            model="text-embedding-3-small"
+            model=Config.OPENAI_EMBEDDING_MODEL,
+            base_url=Config.OPENAI_BASE_URL
         )
         self.vector_store = None
         self.document_metadata = {}
