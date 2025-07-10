@@ -131,7 +131,7 @@ def main():
             st.session_state.vector_store_initialized = True
         
         # Create main tabs
-        tab1, tab2, tab3, tab4 = st.tabs(["📁 Document Upload", "🔍 Query Interface", "📊 Knowledge Base", "⚙️ Settings"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📁 Document Upload", "🔍 Query Interface", "📉 Knowledge Base", "⚙️ Settings"])
         
         with tab1:
             handle_document_upload(doc_processor, vector_store_manager)
@@ -141,12 +141,26 @@ def main():
                 st.warning("⚠️ Please upload and process some documents first")
                 st.stop()
             
+            # Query interface
             st.header("🔍 Query Interface")
             st.markdown("Ask questions about your documents and get AI-powered answers with source citations.")
+            
+            # Follow-up checkbox
+            is_follow_up = st.checkbox("💬 Follow-up question", key="follow_up_checkbox")
+            
+            # Show previous context if it's a follow-up
+            if is_follow_up and st.session_state.chat_history:
+                last_chat = st.session_state.chat_history[-1]
+                with st.info('📝 Previous Question Context'):
+                    st.write("**Previous Question:**")
+                    st.write(last_chat['query'])
+                    st.write("\n**Previous Answer:**")
+                    st.write(last_chat['response'])
             
             # Query input
             query = st.text_area("Enter your question:", height=100)
             
+            # Submit button
             if st.button("Submit Query", type="primary"):
                 if not query:
                     st.warning("Please enter a question")
@@ -166,20 +180,23 @@ def main():
                         
                         # Display sources
                         if results["sources"]:
-                            st.markdown("### 📚 Sources")
+                            st.markdown("### 📘 Sources")
                             for source in results["sources"]:
                                 with st.expander(f"Source {source['id']}: {source['filename']} (Score: {source['similarity_score']:.3f})"):
                                     st.markdown(source["content"])
                         
                         # Display analysis
-                        with st.expander("🔬 Query Analysis"):
+                        with st.expander("🔌 Query Analysis"):
                             st.json(results["analysis"])
                         
-                        # Update chat history
-                        st.session_state.chat_history.extend([
-                            HumanMessage(content=query),
-                            AIMessage(content=results["response"])
-                        ])
+                        # Store chat entry
+                        chat_entry = {
+                            'query': query,
+                            'response': results['response'],
+                            'sources': results.get('sources', []),
+                            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        st.session_state.chat_history.append(chat_entry)
                     else:
                         st.error(f"Error: {results['error']}")
         
@@ -302,38 +319,53 @@ def process_documents(uploaded_files, doc_processor: DocumentProcessor, vector_s
     status_text.empty()
 
 def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
-    """Handle query interface"""
-    
-    st.markdown('<div class="query-section">', unsafe_allow_html=True)
-    st.subheader("🔍 Ask Questions")
-    
-    # Check if vector store is initialized
-    if not st.session_state.vector_store_initialized:
-        st.warning("📚 Please upload and process documents first before asking questions.")
+    """Handle the query interface section of the application"""
+    if not vector_store_manager.has_documents():
+        st.markdown('<div class="status-warning">', unsafe_allow_html=True)
+        st.warning("⚠️ No documents found in the knowledge base. Please upload some documents first.")
         st.markdown('</div>', unsafe_allow_html=True)
         return
+    
+    st.markdown("## 🔍 Query Interface")
+    st.markdown("Ask questions about your documents and get AI-powered answers with source citations.")
+    
+    # Add custom CSS for the checkbox container
+    st.markdown("""
+    <style>
+    .follow-up-container {
+        background-color: #f0f2f6;
+        padding: 10px;
+        border-radius: 5px;
+        margin: 10px 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Follow-up checkbox in a colored container
+    st.markdown('<div class="follow-up-container">', unsafe_allow_html=True)
+    is_follow_up = st.checkbox("💬 Is this a follow-up to your previous question?", key="follow_up_checkbox")
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Show previous context if it's a follow-up and there's history
+    if is_follow_up and hasattr(st.session_state, 'chat_history') and st.session_state.chat_history:
+        last_chat = st.session_state.chat_history[-1]
+        st.info('📝 **Previous Question Context:**')
+        st.markdown(f"**Q:** {last_chat['query']}")
+        st.markdown(f"**A:** {last_chat['response']}")
     
     # Query input
     query = st.text_area(
         "Enter your question:",
         height=100,
-        placeholder="Ask anything about your uploaded documents...",
-        help="Ask detailed questions about the content in your documents. The AI will analyze your query and provide comprehensive answers with source citations."
+        placeholder="Ask anything about your uploaded documents..."
     )
     
-    # Query options
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        search_depth = st.selectbox(
-            "Search Depth:",
-            options=["Standard", "Deep", "Comprehensive"],
-            help="Standard: 5 sources, Deep: 8 sources, Comprehensive: 12 sources"
-        )
-    
+    # Submit button
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        if st.button("🔍 Ask Question", type="primary"):
+        if st.button("🔍 Submit Query", type="primary", use_container_width=True):
             if query.strip():
-                process_query(query, agentic_workflow, search_depth)
+                process_query(query, agentic_workflow, "Standard", is_follow_up)
             else:
                 display_warning_message("Please enter a question")
     
@@ -351,7 +383,7 @@ def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manag
                     for j, source in enumerate(chat['sources'][:3]):  # Show top 3 sources
                         st.markdown(f"- {source.get('filename', 'Unknown')} (Score: {source.get('similarity_score', 0):.3f})")
 
-def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: str):
+def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: str, is_follow_up: bool = False):
     """Process user query"""
     
     # Show processing status
@@ -360,14 +392,32 @@ def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: s
         # Determine search parameters
         k_map = {"Standard": 5, "Deep": 8, "Comprehensive": 12}
         
+        # Prepare context for follow-up questions
+        context = None
+        if is_follow_up and st.session_state.chat_history:
+            last_chat = st.session_state.chat_history[-1]
+            context = {
+                'last_question': last_chat['query'],
+                'last_answer': last_chat['response'],
+                'last_sources': last_chat.get('sources', [])
+            }
+        
         # Run agentic workflow
-        results = agentic_workflow.run_workflow(query)
+        results = agentic_workflow.run_workflow(query, context=context)
         
         if results["success"]:
             # Display response
             st.markdown('<div class="response-section">', unsafe_allow_html=True)
             st.subheader("🎯 Answer")
             st.markdown(results["response"])
+            
+            # Add follow-up suggestions if available
+            if results.get("suggested_follow_ups"):
+                st.markdown("**💡 Suggested Follow-up Questions:**")
+                for suggestion in results["suggested_follow_ups"]:
+                    if st.button(f"🔍 {suggestion}", key=f"follow_up_{hash(suggestion)}"):
+                        process_query(suggestion, agentic_workflow, search_depth, True)
+            
             st.markdown('</div>', unsafe_allow_html=True)
             
             # Display sources

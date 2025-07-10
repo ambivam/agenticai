@@ -21,6 +21,8 @@ class AgentState(TypedDict):
     sources: List[Dict[str, Any]]
     current_step: str
     error: Optional[str]
+    context: Optional[Dict[str, Any]]
+    suggested_follow_ups: List[str]
 
 class AgenticWorkflow:
     """Agentic workflow for RAG using Langgraph"""
@@ -284,6 +286,30 @@ class AgenticWorkflow:
             state["sources"] = sources
             state["current_step"] = "response_generation_complete"
             
+            # Generate suggested follow-up questions
+            follow_up_prompt = ChatPromptTemplate.from_messages([
+                ("system", """Based on the previous question and answer, suggest 3 relevant follow-up questions that would help explore the topic further or clarify important points. 
+                The questions should be concise and directly related to the context.
+                Format your response as a JSON array of strings."""),
+                ("human", "Question: {query}\nAnswer: {response}")
+            ])
+            
+            follow_up_response = self.llm.invoke(
+                follow_up_prompt.format_messages(
+                    query=state["query"],
+                    response=state["response"]
+                )
+            )
+            
+            try:
+                suggested_follow_ups = json.loads(follow_up_response.content)
+                if isinstance(suggested_follow_ups, list):
+                    state["suggested_follow_ups"] = suggested_follow_ups[:3]
+                else:
+                    state["suggested_follow_ups"] = []
+            except json.JSONDecodeError:
+                state["suggested_follow_ups"] = []
+            
             logger.info("Response generation complete")
             return state
             
@@ -332,7 +358,7 @@ class AgenticWorkflow:
             state["error"] = f"Quality check failed: {str(e)}"
             return state
     
-    def run_workflow(self, query: str, chat_history: List[BaseMessage] = None) -> Dict[str, Any]:
+    def run_workflow(self, query: str, chat_history: List[BaseMessage] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Run the complete agentic workflow"""
         try:
             logger.info(f"Running agentic workflow for query: {query[:50]}...")
@@ -346,7 +372,9 @@ class AgenticWorkflow:
                 response="",
                 sources=[],
                 current_step="initialized",
-                error=None
+                error=None,
+                context=context,
+                suggested_follow_ups=[]
             )
             
             # Run workflow
@@ -360,7 +388,8 @@ class AgenticWorkflow:
                 "search_results_count": len(final_state.get("search_results", [])),
                 "current_step": final_state.get("current_step", "unknown"),
                 "error": final_state.get("error"),
-                "success": final_state.get("error") is None
+                "success": final_state.get("error") is None,
+                "suggested_follow_ups": final_state.get("suggested_follow_ups", [])
             }
             
             logger.info(f"Workflow completed successfully: {results['current_step']}")
