@@ -32,6 +32,7 @@ from utils import (
 from document_processor import DocumentProcessor
 from vector_store import VectorStoreManager
 from agentic_workflow import AgenticWorkflow
+from chat_interface import handle_chat_interface, add_chat_styles
 
 # Initialize session state
 def initialize_session_state():
@@ -124,79 +125,59 @@ def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manage
 
 def main():
     """Main application function"""
-    
     try:
-        # Check OpenAI API key
-        if not Config.OPENAI_API_KEY:
-            st.error("⚠️ OpenAI API key not found")
-            st.info("Create a .env file in the project directory and add: OPENAI_API_KEY=your_api_key_here")
-            st.stop()
-        
         # Initialize session state
         initialize_session_state()
         
-        # Initialize components with proper error handling
-        try:
-            # Create document processor
-            doc_processor = DocumentProcessor(
-                chunk_size=Config.CHUNK_SIZE,
-                chunk_overlap=Config.CHUNK_OVERLAP
-            )
-            
-            # Initialize vector store manager
-            vector_store_manager = VectorStoreManager(
-                openai_api_key=Config.OPENAI_API_KEY,
-                vector_db_path=Config.VECTOR_DB_PATH
-            )
-            
-            # Initialize workflow
-            agentic_workflow = AgenticWorkflow(
-                openai_api_key=Config.OPENAI_API_KEY,
-                vector_store_manager=vector_store_manager
-            )
-            
-            # Check vector store initialization
-            store_info = vector_store_manager.get_store_info()
-            if store_info and store_info.get("initialized", False):
-                st.session_state.vector_store_initialized = True
-            else:
-                st.session_state.vector_store_initialized = False
-            
-        except Exception as e:
-            st.error("Failed to initialize application components")
-            logging.error(f"Component initialization error: {str(e)}")
-            st.info("Please check your configuration and try again")
-            return
+        # Create custom CSS
+        create_custom_css()
+        add_chat_styles()
         
-        # Create main tabs
-        tab_upload, tab_query, tab_knowledge, tab_settings = st.tabs([
-            "📁 Document Upload",
-            "🔍 Query Interface",
-            "📖 Knowledge Base",
+        # Create sidebar
+        create_sidebar_info()
+        
+        # Initialize components
+        doc_processor = DocumentProcessor(
+            chunk_size=Config.CHUNK_SIZE,
+            chunk_overlap=Config.CHUNK_OVERLAP
+        )
+        
+        vector_store_manager = VectorStoreManager(
+            openai_api_key=Config.OPENAI_API_KEY,
+            vector_db_path=Config.VECTOR_DB_PATH
+        )
+        
+        agentic_workflow = AgenticWorkflow(
+            openai_api_key=Config.OPENAI_API_KEY,
+            vector_store_manager=vector_store_manager
+        )
+        
+        # Document upload section (always visible)
+        handle_document_upload(doc_processor, vector_store_manager)
+        
+        # Main tabs
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "💬 Chat",
+            "📝 Query Interface",
+            "📚 Knowledge Base",
             "⚙️ Settings"
         ])
         
-        # Handle each tab with proper error handling
-        try:
-            with tab_upload:
-                handle_document_upload(doc_processor, vector_store_manager)
-            
-            with tab_query:
-                handle_query_interface(agentic_workflow, vector_store_manager)
-            
-            with tab_knowledge:
-                handle_knowledge_base(vector_store_manager)
-            
-            with tab_settings:
-                handle_settings(vector_store_manager)
-                
-        except Exception as e:
-            st.error(f"Error in tab handling: {str(e)}")
-            logging.error(f"Tab handling error: {str(e)}")
-    
+        with tab1:
+            handle_chat_interface(agentic_workflow, vector_store_manager)
+        
+        with tab2:
+            handle_query_interface(agentic_workflow, vector_store_manager)
+        
+        with tab3:
+            handle_knowledge_base(vector_store_manager)
+        
+        with tab4:
+            handle_settings(vector_store_manager)
+        
     except Exception as e:
-        st.error(f"Critical application error: {str(e)}")
-        logging.error(f"Critical error in main: {str(e)}")
+        logger.error(f"Application error: {str(e)}")
+        st.error(f"An error occurred: {str(e)}")
         st.info("Please check your configuration and try again.")
 
 
