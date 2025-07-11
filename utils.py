@@ -1,4 +1,3 @@
-
 import os
 import hashlib
 import streamlit as st
@@ -74,31 +73,37 @@ def create_sidebar_info():
         st.markdown("---")
         
         st.markdown("### 📋 Features")
-        st.markdown("""
-        - 🔄 **Agentic Workflows**: Multi-step reasoning
-        - 📚 **Multi-format Support**: PDF, Word, Excel, PPT, etc.
-        - 🧠 **Smart Chunking**: Intelligent document processing
-        - 🔍 **Vector Search**: FAISS-powered similarity search
-        - 📖 **Source Attribution**: Detailed citations
-        - 🎯 **Query Planning**: Strategic question decomposition
-        """)
+        st.markdown(
+            """
+            - 🔄 **Agentic Workflows**: Multi-step reasoning
+            - 📚 **Multi-format Support**: PDF, Word, Excel, PPT, etc.
+            - 🧠 **Smart Chunking**: Intelligent document processing
+            - 🔍 **Vector Search**: FAISS-powered similarity search
+            - 📖 **Source Attribution**: Detailed citations
+            - 🎯 **Query Planning**: Strategic question decomposition
+            """
+        )
         
         st.markdown("### 📁 Supported Formats")
-        st.markdown("""
-        - 📄 **Documents**: PDF, DOCX, TXT
-        - 📊 **Spreadsheets**: XLSX, CSV
-        - 🎨 **Presentations**: PPTX
-        - 🌐 **Web**: HTML, XML
-        - 💾 **Data**: JSON
-        """)
+        st.markdown(
+            """
+            - 📄 **Documents**: PDF, DOCX, TXT
+            - 📈 **Spreadsheets**: XLSX, CSV
+            - 🎨 **Presentations**: PPTX
+            - 🌐 **Web**: HTML, XML
+            - 💾 **Data**: JSON
+            """
+        )
         
         st.markdown("### ⚙️ Configuration")
-        st.markdown("""
-        - **Model**: GPT-4 Turbo
-        - **Embeddings**: text-embedding-3-small
-        - **Vector DB**: FAISS (Local)
-        - **Chunk Size**: 1000 tokens
-        """)
+        st.markdown(
+            """
+            - **Model**: GPT-4 Turbo
+            - **Embeddings**: text-embedding-3-small
+            - **Vector DB**: FAISS (Local)
+            - **Chunk Size**: 1000 tokens
+            """
+        )
 
 def validate_file_upload(uploaded_file, max_size: int, supported_formats: List[str] = None) -> tuple:
     """Validate uploaded file"""
@@ -126,7 +131,7 @@ def validate_file_upload(uploaded_file, max_size: int, supported_formats: List[s
         return False, f"Error validating file {uploaded_file.name}: {str(e)}"
 
 def format_file_size(size_bytes: int) -> str:
-    """Format file size in human readable format"""
+    """Format file size in bytes to human readable format"""
     if size_bytes == 0:
         return "0B"
     size_names = ["B", "KB", "MB", "GB"]
@@ -135,6 +140,15 @@ def format_file_size(size_bytes: int) -> str:
         size_bytes /= 1024
         i += 1
     return f"{size_bytes:.1f} {size_names[i]}"
+
+def get_file_type(filename: str) -> str:
+    """Get file type from filename"""
+    try:
+        ext = filename.split('.')[-1].upper()
+        return ext if ext else 'Unknown'
+    except Exception as e:
+        logger.error(f"Error getting file type: {str(e)}")
+        return 'Unknown'
 
 def format_sources(sources: List[Dict[str, Any]]) -> str:
     """Format source information for display"""
@@ -157,15 +171,15 @@ def format_sources(sources: List[Dict[str, Any]]) -> str:
 
 def display_success_message(message: str):
     """Display success message"""
-    st.markdown(f'<div class="status-success">✅ {message}</div>', unsafe_allow_html=True)
+    st.success(message)
 
 def display_error_message(message: str):
     """Display error message"""
-    st.markdown(f'<div class="status-error">❌ {message}</div>', unsafe_allow_html=True)
+    st.error(message)
 
 def display_warning_message(message: str):
     """Display warning message"""
-    st.markdown(f'<div class="status-warning">⚠️ {message}</div>', unsafe_allow_html=True)
+    st.warning(message)
 
 def create_progress_bar(progress: float, text: str = ""):
     """Create a progress bar with text"""
@@ -182,31 +196,41 @@ def create_sidebar_info():
     """Create sidebar information"""
     with st.sidebar:
         st.markdown("### 📖 About")
-        st.markdown("""
-        This is an Agentic RAG Assistant that helps you:
-        - 📁 Upload and process documents
-        - 🔍 Ask questions about your documents
-        - 📂 Manage your knowledge base
-        - ⚙️ Configure application settings
-        """)
-        
+        st.markdown(
+            """
+            This is an Agentic RAG Assistant that helps you:
+            - 📁 Upload and process documents
+            - 🔍 Ask questions about your documents
+            - 📂 Manage your knowledge base
+            - ⚙️ Configure application settings
+            """
+        )
+
         st.markdown("### 💬 How to Use")
-        st.markdown("""
-        1. Upload your documents in the Document Upload tab
-        2. Wait for processing to complete
-        3. Ask questions in the Query Interface tab
-        4. View sources and explore the knowledge base
-        """)
+        st.markdown(
+            """
+            1. Upload your documents in the Document Upload tab
+            2. Wait for processing to complete
+            3. Ask questions in the Query Interface tab
+            """
+        )
 
-
-
-def format_file_size(size_bytes: int) -> str:
+def format_file_size(size_in_bytes: int) -> str:
     """Format file size in bytes to human readable format"""
     for unit in ['B', 'KB', 'MB', 'GB']:
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} TB"
+        if size_in_bytes < 1024.0:
+            return f"{size_in_bytes:.1f} {unit}"
+        size_in_bytes /= 1024.0
+    return f"{size_in_bytes:.1f} GB"
+
+def get_file_type(filename: str) -> str:
+    """Get file type from filename"""
+    try:
+        ext = filename.split('.')[-1].upper()
+        return ext if ext else 'Unknown'
+    except Exception as e:
+        logger.error(f"Error getting file type: {str(e)}")
+        return 'Unknown'
 
 def format_sources(sources: List[Dict[str, Any]]) -> str:
     """Format source information"""

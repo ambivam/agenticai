@@ -190,6 +190,15 @@ class VectorStoreManager:
             logger.error(f"Error clearing vector store: {str(e)}")
             return False
     
+    def has_documents(self) -> bool:
+        """Check if vector store has any documents"""
+        try:
+            store_info = self.get_store_info()
+            return store_info.get("initialized", False) and store_info.get("total_documents", 0) > 0
+        except Exception as e:
+            logger.error(f"Error checking documents: {str(e)}")
+            return False
+    
     def get_store_info(self) -> Dict[str, Any]:
         """Get information about the vector store"""
         try:

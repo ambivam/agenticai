@@ -336,16 +336,22 @@ class AgenticWorkflow:
             # Check if response addresses the query
             query_keywords = set(query.lower().split())
             response_keywords = set(response.lower().split())
-            overlap = len(query_keywords.intersection(response_keywords))
             
-            if overlap / len(query_keywords) < 0.3:
-                quality_issues.append("Response might not fully address the query")
+            # Calculate keyword overlap safely
+            if query_keywords:
+                overlap = len(query_keywords.intersection(response_keywords))
+                overlap_ratio = overlap / len(query_keywords)
+                if overlap_ratio < 0.3:
+                    quality_issues.append("Response might not fully address the query")
+            else:
+                overlap = 0
+                overlap_ratio = 1.0  # If no keywords, assume full overlap
             
             # Store quality check results
             state["analysis_results"]["quality_check"] = {
                 "issues": quality_issues,
                 "response_length": len(response),
-                "keyword_overlap": overlap / len(query_keywords) if query_keywords else 0
+                "keyword_overlap": overlap_ratio
             }
             
             state["current_step"] = "complete"

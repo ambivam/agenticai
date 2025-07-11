@@ -1,10 +1,17 @@
-
 import streamlit as st
 import os
 import time
+import logging
 from datetime import datetime
 from typing import List, Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Set page config first
 st.set_page_config(
@@ -19,7 +26,8 @@ from config import Config
 from utils import (
     create_custom_css, create_sidebar_info,
     display_success_message, display_error_message, display_warning_message,
-    validate_file_upload, format_sources, format_file_size
+    validate_file_upload, format_sources, format_file_size,
+    get_file_type
 )
 from document_processor import DocumentProcessor
 from vector_store import VectorStoreManager
@@ -28,210 +36,176 @@ from agentic_workflow import AgenticWorkflow
 # Initialize session state
 def initialize_session_state():
     """Initialize session state variables"""
-    if 'documents_processed' not in st.session_state:
-        st.session_state.documents_processed = []
-    
-    if 'vector_store_initialized' not in st.session_state:
-        st.session_state.vector_store_initialized = False
-    
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
-    
-    if 'processing_status' not in st.session_state:
-        st.session_state.processing_status = {}
+    if 'vector_store_initialized' not in st.session_state:
+        st.session_state.vector_store_initialized = False
+    if 'documents_processed' not in st.session_state:
+        st.session_state.documents_processed = []
+    if 'show_response' not in st.session_state:
+        st.session_state.show_response = False
+    if 'current_query' not in st.session_state:
+        st.session_state.current_query = None
+    if 'uploaded_files' not in st.session_state:
+        st.session_state.uploaded_files = None
+    if 'query_submitted' not in st.session_state:
+        st.session_state.query_submitted = False
+    if 'is_follow_up' not in st.session_state:
+        st.session_state.is_follow_up = False
 
 def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manager: VectorStoreManager):
     """Handle document upload interface"""
-    st.header("📁 Document Upload")
-    st.markdown("Upload your documents to build the knowledge base. Supported formats: " + ", ".join(Config.SUPPORTED_FORMATS))
-    
-    # File uploader
-    uploaded_files = st.file_uploader(
-        "Choose files",
-        accept_multiple_files=True,
-        type=Config.SUPPORTED_FORMATS,
-        key="file_uploader"
-    )
-    
-    if uploaded_files:
-        # Process button
-        if st.button("📝 Process Documents", type="primary"):
-            with st.spinner("🔄 Processing documents..."):
-                for uploaded_file in uploaded_files:
-                    try:
-                        # Validate file
-                        if not validate_file_upload(uploaded_file, Config.MAX_FILE_SIZE):
+    try:
+        st.markdown('<div class="upload-section">', unsafe_allow_html=True)
+        st.subheader("📁 Upload Documents")
+        st.markdown("Upload your documents to build the knowledge base. Supported formats: PDF, DOCX, TXT, CSV, XLSX, PPTX, JSON, HTML, XML")
+        
+        # File upload
+        st.session_state.uploaded_files = st.file_uploader(
+            "Choose files",
+            type=Config.SUPPORTED_FORMATS,
+            accept_multiple_files=True,
+            help=f"Maximum file size: {format_file_size(Config.MAX_FILE_SIZE)}"
+        )
+        
+        if st.session_state.uploaded_files:
+            st.write(f"📄 {len(st.session_state.uploaded_files)} file(s) selected")
+            
+            # Display file information
+            for file in st.session_state.uploaded_files:
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    st.write(f"📎 {file.name}")
+                with col2:
+                    st.write(f"{format_file_size(file.size)}")
+                with col3:
+                    st.write(f"{get_file_type(file.name)}")
+            
+            # Process button
+            if st.button("🔄 Process Documents", type="primary", use_container_width=True):
+                with st.spinner("Processing documents..."):
+                    all_documents = []
+                    
+                    # Process each file
+                    for file in st.session_state.uploaded_files:
+                        if file.size > Config.MAX_FILE_SIZE:
+                            st.error(f"⚠️ {file.name} exceeds maximum file size of {format_file_size(Config.MAX_FILE_SIZE)}")
                             continue
                         
-                        # Process document
-                        st.info(f"Processing {uploaded_file.name}...")
-                        documents = doc_processor.process_file(uploaded_file)
-                        
-                        # Add to vector store
-                        if documents:
-                            if vector_store_manager.add_documents(documents):
-                                st.session_state.documents_processed.append(uploaded_file.name)
-                                st.session_state.vector_store_initialized = True
-                                display_success_message(f"Successfully processed {uploaded_file.name}")
+                        try:
+                            # Process file
+                            documents = doc_processor.process_file(file)
+                            if documents:
+                                all_documents.extend(documents)
+                                st.success(f"✅ Successfully processed {file.name}: {len(documents)} chunks created")
                             else:
-                                display_error_message(f"Failed to add {uploaded_file.name} to vector store")
-                        else:
-                            display_warning_message(f"No content extracted from {uploaded_file.name}")
-                            
-                    except Exception as e:
-                        display_error_message(f"Error processing {uploaded_file.name}: {str(e)}")
-                        continue
-    
-    # Show processed documents
-    if st.session_state.documents_processed:
-        st.markdown("### 📂 Processed Documents")
-        for doc in st.session_state.documents_processed:
-            st.write(f"- {doc}")
-    else:
-        st.info("No documents processed yet")
+                                st.warning(f"⚠️ No content extracted from {file.name}")
+                        except Exception as e:
+                            st.error(f"❌ Failed to process {file.name}: {str(e)}")
+                            logging.error(f"Error processing file {file.name}: {str(e)}")
+                    
+                    # Update vector store
+                    if all_documents:
+                        try:
+                            vector_store_manager.add_documents(all_documents)
+                            st.session_state.vector_store_initialized = True
+                            st.success("✨ Vector store updated successfully!")
+                        except Exception as e:
+                            st.error(f"❌ Failed to update vector store: {str(e)}")
+                            logging.error(f"Vector store error: {str(e)}")
+                    else:
+                        st.warning("⚠️ No documents were processed successfully")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"❌ Document upload interface error: {str(e)}")
+        logging.error(f"Document upload interface error: {str(e)}")
 
 def main():
     """Main application function"""
     
-    # Initialize session state
-    initialize_session_state()
-    
-    # Create custom CSS
-    create_custom_css()
-    
-    # Create sidebar info
-    create_sidebar_info()
-    
-    # Check OpenAI API key
-    if not Config.OPENAI_API_KEY:
-        st.error("🔑 Please set your OPENAI_API_KEY in the environment variables or .env file")
-        st.info("Create a .env file in the project directory and add: OPENAI_API_KEY=your_api_key_here")
-        st.stop()
-    
     try:
-        # Initialize components
-        doc_processor = DocumentProcessor(
-            chunk_size=Config.CHUNK_SIZE,
-            chunk_overlap=Config.CHUNK_OVERLAP
-        )
+        # Check OpenAI API key
+        if not Config.OPENAI_API_KEY:
+            st.error("⚠️ OpenAI API key not found")
+            st.info("Create a .env file in the project directory and add: OPENAI_API_KEY=your_api_key_here")
+            st.stop()
         
-        vector_store_manager = VectorStoreManager(
-            openai_api_key=Config.OPENAI_API_KEY,
-            vector_db_path=Config.VECTOR_DB_PATH
-        )
+        # Initialize session state
+        initialize_session_state()
         
-        agentic_workflow = AgenticWorkflow(
-            openai_api_key=Config.OPENAI_API_KEY,
-            vector_store_manager=vector_store_manager
-        )
-        
-        # Check if vector store is initialized
-        store_info = vector_store_manager.get_store_info()
-        if store_info.get("initialized", False):
-            st.session_state.vector_store_initialized = True
+        # Initialize components with proper error handling
+        try:
+            # Create document processor
+            doc_processor = DocumentProcessor(
+                chunk_size=Config.CHUNK_SIZE,
+                chunk_overlap=Config.CHUNK_OVERLAP
+            )
+            
+            # Initialize vector store manager
+            vector_store_manager = VectorStoreManager(
+                openai_api_key=Config.OPENAI_API_KEY,
+                vector_db_path=Config.VECTOR_DB_PATH
+            )
+            
+            # Initialize workflow
+            agentic_workflow = AgenticWorkflow(
+                openai_api_key=Config.OPENAI_API_KEY,
+                vector_store_manager=vector_store_manager
+            )
+            
+            # Check vector store initialization
+            store_info = vector_store_manager.get_store_info()
+            if store_info and store_info.get("initialized", False):
+                st.session_state.vector_store_initialized = True
+            else:
+                st.session_state.vector_store_initialized = False
+            
+        except Exception as e:
+            st.error("Failed to initialize application components")
+            logging.error(f"Component initialization error: {str(e)}")
+            st.info("Please check your configuration and try again")
+            return
         
         # Create main tabs
-        tab1, tab2, tab3, tab4 = st.tabs(["📁 Document Upload", "🔍 Query Interface", "📉 Knowledge Base", "⚙️ Settings"])
+        tab_upload, tab_query, tab_knowledge, tab_settings = st.tabs([
+            "📁 Document Upload",
+            "🔍 Query Interface",
+            "📖 Knowledge Base",
+            "⚙️ Settings"
+        ])
         
-        with tab1:
-            handle_document_upload(doc_processor, vector_store_manager)
-        
-        with tab2:
-            if not st.session_state.vector_store_initialized:
-                st.warning("⚠️ Please upload and process some documents first")
-                st.stop()
+        # Handle each tab with proper error handling
+        try:
+            with tab_upload:
+                handle_document_upload(doc_processor, vector_store_manager)
             
-            # Query interface
-            st.header("🔍 Query Interface")
-            st.markdown("Ask questions about your documents and get AI-powered answers with source citations.")
+            with tab_query:
+                handle_query_interface(agentic_workflow, vector_store_manager)
             
-            # Follow-up checkbox
-            is_follow_up = st.checkbox("💬 Follow-up question", key="follow_up_checkbox")
+            with tab_knowledge:
+                handle_knowledge_base(vector_store_manager)
             
-            # Show previous context if it's a follow-up
-            if is_follow_up and st.session_state.chat_history:
-                last_chat = st.session_state.chat_history[-1]
-                with st.info('📝 Previous Question Context'):
-                    st.write("**Previous Question:**")
-                    st.write(last_chat['query'])
-                    st.write("\n**Previous Answer:**")
-                    st.write(last_chat['response'])
-            
-            # Query input
-            query = st.text_area("Enter your question:", height=100)
-            
-            # Submit button
-            if st.button("Submit Query", type="primary"):
-                if not query:
-                    st.warning("Please enter a question")
-                    st.stop()
+            with tab_settings:
+                handle_settings(vector_store_manager)
                 
-                with st.spinner("🤔 Processing your query..."):
-                    # Run agentic workflow
-                    results = agentic_workflow.run_workflow(
-                        query=query,
-                        chat_history=st.session_state.chat_history
-                    )
-                    
-                    if results["success"]:
-                        # Display response
-                        st.markdown("### 📝 Response")
-                        st.markdown(results["response"])
-                        
-                        # Display sources
-                        if results["sources"]:
-                            st.markdown("### 📘 Sources")
-                            for source in results["sources"]:
-                                with st.expander(f"Source {source['id']}: {source['filename']} (Score: {source['similarity_score']:.3f})"):
-                                    st.markdown(source["content"])
-                        
-                        # Display analysis
-                        with st.expander("🔌 Query Analysis"):
-                            st.json(results["analysis"])
-                        
-                        # Store chat entry
-                        chat_entry = {
-                            'query': query,
-                            'response': results['response'],
-                            'sources': results.get('sources', []),
-                            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        }
-                        st.session_state.chat_history.append(chat_entry)
-                    else:
-                        st.error(f"Error: {results['error']}")
-        
-
-        
-        with tab3:
-            handle_knowledge_base(vector_store_manager)
-        
-        with tab4:
-            handle_settings(vector_store_manager)
+        except Exception as e:
+            st.error(f"Error in tab handling: {str(e)}")
+            logging.error(f"Tab handling error: {str(e)}")
     
     except Exception as e:
-        st.error(f"Application initialization error: {str(e)}")
+        st.error(f"Critical application error: {str(e)}")
+        logging.error(f"Critical error in main: {str(e)}")
         st.info("Please check your configuration and try again.")
 
-def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manager: VectorStoreManager):
-    """Handle document upload interface"""
+
     
-    st.markdown('<div class="upload-section">', unsafe_allow_html=True)
-    st.subheader("📁 Upload Documents")
-    st.markdown("Upload your documents to build the knowledge base. Supported formats: PDF, DOCX, TXT, CSV, XLSX, PPTX, JSON, HTML, XML")
-    
-    # File upload
-    uploaded_files = st.file_uploader(
-        "Choose files",
-        type=Config.SUPPORTED_FORMATS,
-        accept_multiple_files=True,
-        help=f"Maximum file size: {format_file_size(Config.MAX_FILE_SIZE)}"
-    )
-    
-    if uploaded_files:
-        st.write(f"📄 {len(uploaded_files)} file(s) selected")
+    if st.session_state.uploaded_files:
+        st.write(f"📄 {len(st.session_state.uploaded_files)} file(s) selected")
         
         # Display file information
-        for file in uploaded_files:
+        for file in st.session_state.uploaded_files:
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
                 st.write(f"📎 {file.name}")
@@ -242,7 +216,7 @@ def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manage
         
         # Process files button
         if st.button("🚀 Process Documents", type="primary"):
-            process_documents(uploaded_files, doc_processor, vector_store_manager)
+            process_documents(st.session_state.uploaded_files, doc_processor, vector_store_manager)
     
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -268,49 +242,48 @@ def process_documents(uploaded_files, doc_processor: DocumentProcessor, vector_s
         status_text.text(f"Processing {uploaded_file.name}...")
         progress_bar.progress((i + 0.5) / total_files)
         
-        # Validate file
-        is_valid, message = validate_file_upload(
-            uploaded_file, 
-            Config.MAX_FILE_SIZE, 
-            Config.SUPPORTED_FORMATS
-        )
-        
-        if not is_valid:
-            display_error_message(f"File {uploaded_file.name}: {message}")
-            continue
-        
         try:
+            # Validate file size
+            if uploaded_file.size > Config.MAX_FILE_SIZE:
+                st.warning(f"⚠️ {uploaded_file.name} exceeds size limit of {format_file_size(Config.MAX_FILE_SIZE)}")
+                continue
+            
             # Process document
             documents = doc_processor.process_file(uploaded_file)
-            all_documents.extend(documents)
-            
-            # Store processing info
-            doc_info = {
-                'filename': uploaded_file.name,
-                'chunks': len(documents),
-                'characters': sum(len(doc.page_content) for doc in documents),
-                'words': sum(len(doc.page_content.split()) for doc in documents),
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            st.session_state.documents_processed.append(doc_info)
-            
-            display_success_message(f"Processed {uploaded_file.name}: {len(documents)} chunks created")
-            
+            if documents:
+                all_documents.extend(documents)
+                
+                # Record document info
+                doc_info = {
+                    'filename': uploaded_file.name,
+                    'chunks': len(documents),
+                    'characters': sum(len(doc.page_content) for doc in documents),
+                    'words': sum(len(doc.page_content.split()) for doc in documents),
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                st.session_state.documents_processed.append(doc_info)
+                st.success(f"✅ Processed {uploaded_file.name}: {len(documents)} chunks created")
+            else:
+                st.warning(f"⚠️ No content extracted from {uploaded_file.name}")
+                
         except Exception as e:
-            display_error_message(f"Error processing {uploaded_file.name}: {str(e)}")
+            st.error(f"❌ Error processing {uploaded_file.name}: {str(e)}")
+            logging.error(f"Error processing {uploaded_file.name}: {str(e)}")
         
         progress_bar.progress((i + 1) / total_files)
     
     # Add to vector store
     if all_documents:
         status_text.text("Adding documents to vector store...")
-        success = vector_store_manager.add_documents(all_documents, show_progress=False)
-        
-        if success:
+        try:
+            vector_store_manager.add_documents(all_documents)
             st.session_state.vector_store_initialized = True
-            display_success_message(f"Successfully added {len(all_documents)} document chunks to knowledge base!")
-        else:
-            display_error_message("Failed to add documents to vector store")
+            st.success("✨ Documents added to vector store successfully!")
+        except Exception as e:
+            st.error(f"❌ Failed to add documents to vector store: {str(e)}")
+            logging.error(f"Vector store error: {str(e)}")
+    else:
+        st.warning("⚠️ No documents were processed successfully")
     
     progress_bar.progress(1.0)
     status_text.text("Processing complete!")
@@ -320,68 +293,70 @@ def process_documents(uploaded_files, doc_processor: DocumentProcessor, vector_s
 
 def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
     """Handle the query interface section of the application"""
-    if not vector_store_manager.has_documents():
-        st.markdown('<div class="status-warning">', unsafe_allow_html=True)
-        st.warning("⚠️ No documents found in the knowledge base. Please upload some documents first.")
-        st.markdown('</div>', unsafe_allow_html=True)
-        return
+    try:
+        # Check if vector store has documents
+        if not vector_store_manager.has_documents():
+            st.warning("⚠️ Please upload and process some documents first")
+            return
+        
+        # Initialize session state for query interface
+        if 'show_response' not in st.session_state:
+            st.session_state.show_response = False
+        if 'current_query' not in st.session_state:
+            st.session_state.current_query = None
+        
+        st.header("🔍 Query Interface")
+        st.markdown("Ask questions about your documents and get AI-powered answers with source citations.")
+        
+        # Follow-up checkbox
+        is_follow_up = st.checkbox(
+            "💬 Is this a follow-up question?",
+            key="follow_up",
+            help="Check this if your question is related to the previous answer"
+        )
+        
+        # Show previous context if it's a follow-up
+        if is_follow_up and st.session_state.chat_history:
+            last_chat = st.session_state.chat_history[-1]
+            with st.info('📝 Previous Question Context'):
+                st.write("**Previous Question:**")
+                st.write(last_chat['query'])
+                st.write("\n**Previous Answer:**")
+                st.write(last_chat['response'])
+        
+        # Query input
+        query = st.text_area(
+            "Enter your question:",
+            height=100,
+            placeholder="Ask anything about your documents...",
+            key="query_input"
+        )
+        
+        # Submit button
+        col1, col2, col3 = st.columns([1,2,1])
+        with col2:
+            if st.button("🔍 Submit Query", type="primary", use_container_width=True):
+                if query and query.strip():
+                    with st.spinner("🤔 Processing your query..."):
+                        process_query(query, agentic_workflow, "Standard", is_follow_up)
+                else:
+                    st.warning("Please enter a question")
+        
+        # Display chat history
+        if st.session_state.chat_history:
+            st.subheader("💬 Chat History")
+            for chat in reversed(st.session_state.chat_history[-5:]):  # Show last 5
+                with st.expander(f"Q: {chat['query'][:50]}..."):
+                    st.markdown(f"**Question:** {chat['query']}")
+                    st.markdown(f"**Answer:** {chat['response']}")
+                    if chat.get('sources'):
+                        st.markdown("**Sources:**")
+                        for source in chat['sources']:
+                            st.markdown(f"- {source}")
     
-    st.markdown("## 🔍 Query Interface")
-    st.markdown("Ask questions about your documents and get AI-powered answers with source citations.")
-    
-    # Add custom CSS for the checkbox container
-    st.markdown("""
-    <style>
-    .follow-up-container {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Follow-up checkbox in a colored container
-    st.markdown('<div class="follow-up-container">', unsafe_allow_html=True)
-    is_follow_up = st.checkbox("💬 Is this a follow-up to your previous question?", key="follow_up_checkbox")
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Show previous context if it's a follow-up and there's history
-    if is_follow_up and hasattr(st.session_state, 'chat_history') and st.session_state.chat_history:
-        last_chat = st.session_state.chat_history[-1]
-        st.info('📝 **Previous Question Context:**')
-        st.markdown(f"**Q:** {last_chat['query']}")
-        st.markdown(f"**A:** {last_chat['response']}")
-    
-    # Query input
-    query = st.text_area(
-        "Enter your question:",
-        height=100,
-        placeholder="Ask anything about your uploaded documents..."
-    )
-    
-    # Submit button
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        if st.button("🔍 Submit Query", type="primary", use_container_width=True):
-            if query.strip():
-                process_query(query, agentic_workflow, "Standard", is_follow_up)
-            else:
-                display_warning_message("Please enter a question")
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    # Display chat history
-    if st.session_state.chat_history:
-        st.subheader("💬 Chat History")
-        for i, chat in enumerate(reversed(st.session_state.chat_history[-5:])):  # Show last 5
-            with st.expander(f"Q: {chat['query'][:50]}... - {chat['timestamp']}"):
-                st.markdown(f"**Question:** {chat['query']}")
-                st.markdown(f"**Answer:** {chat['response']}")
-                if chat.get('sources'):
-                    st.markdown("**Sources:**")
-                    for j, source in enumerate(chat['sources'][:3]):  # Show top 3 sources
-                        st.markdown(f"- {source.get('filename', 'Unknown')} (Score: {source.get('similarity_score', 0):.3f})")
+    except Exception as e:
+        st.error(f"❌ Query interface error: {str(e)}")
+        logging.error(f"Query interface error: {str(e)}")
 
 def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: str, is_follow_up: bool = False):
     """Process user query"""
