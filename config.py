@@ -24,6 +24,12 @@ class Config:
     CHUNK_SIZE = 1000
     CHUNK_OVERLAP = 200
     
+    # Memory Configuration
+    MEMORY_TYPE = os.getenv("MEMORY_TYPE", "sqlite")
+    MEMORY_PATH = os.getenv("MEMORY_PATH", "./data/memory.db")
+    MEMORY_TABLE = os.getenv("MEMORY_TABLE", "chat_memory")
+    MEMORY_TTL = int(os.getenv("MEMORY_TTL", "24"))  # Hours
+    
     # File Upload Configuration
     MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
     SUPPORTED_FORMATS = [

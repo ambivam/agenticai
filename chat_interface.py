@@ -4,6 +4,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 from agentic_workflow import AgenticWorkflow
 from vector_store import VectorStoreManager
 import logging
+from chat_memory import ChatMemory
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +30,17 @@ def display_chat_message(message: Dict[str, Any], is_user: bool):
 def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
     """Handle the chat interface section of the application"""
     try:
-        # Initialize chat history if not exists
-        if 'chat_history' not in st.session_state:
-            st.session_state.chat_history = []
+        # Initialize chat memory
+        chat_memory = ChatMemory()
+        
+        # Initialize session ID in session state if not exists
+        if "session_id" not in st.session_state:
+            st.session_state.session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+        
+        # Initialize chat history in session state if not exists
+        if "chat_history" not in st.session_state:
+            # Try to load from persistent storage
+            st.session_state.chat_history = chat_memory.get_chat_history(st.session_state.session_id)
         
         st.subheader("💬 Chat Interface")
         
@@ -99,14 +109,23 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                     if response.get("suggested_follow_ups"):
                         assistant_message["suggested_follow_ups"] = response["suggested_follow_ups"]
                     st.session_state.chat_history.append(assistant_message)
+                    
+                    # Save to persistent storage
+                    chat_memory.save_chat_history(
+                        st.session_state.session_id,
+                        st.session_state.chat_history,
+                        metadata={"last_query": user_input}
+                    )
                 
                 # Force a rerun to update the chat display
                 st.rerun()
         
         # Add a clear chat button
         if st.session_state.chat_history:
-            if st.button("🗑️ Clear Chat History"):
+            if st.button("Clear chat history"):
                 st.session_state.chat_history = []
+                # Clear from persistent storage
+                chat_memory.delete_chat_history(st.session_state.session_id)
                 st.rerun()
     
     except Exception as e:
