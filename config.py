@@ -28,7 +28,9 @@ class Config:
     MEMORY_TYPE = os.getenv("MEMORY_TYPE", "sqlite")
     MEMORY_PATH = os.getenv("MEMORY_PATH", "./data/memory.db")
     MEMORY_TABLE = os.getenv("MEMORY_TABLE", "chat_memory")
-    MEMORY_TTL = int(os.getenv("MEMORY_TTL", "24"))  # Hours
+    # Memory TTL in hours
+    memory_ttl_str = os.getenv("MEMORY_TTL", "24")
+    MEMORY_TTL = int(memory_ttl_str.split('#')[0].strip())  # Extract number before any comments
     
     # File Upload Configuration
     MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB

@@ -279,163 +279,165 @@ def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manag
         if not vector_store_manager.has_documents():
             st.warning("⚠️ Please upload and process some documents first")
             return
-        
-        # Initialize session state for query interface
-        if 'show_response' not in st.session_state:
-            st.session_state.show_response = False
-        if 'current_query' not in st.session_state:
-            st.session_state.current_query = None
-        
-        st.header("🔍 Query Interface")
-        st.markdown("Ask questions about your documents and get AI-powered answers with source citations.")
-        
-        # Follow-up checkbox
-        is_follow_up = st.checkbox(
-            "💬 Is this a follow-up question?",
-            key="follow_up",
-            help="Check this if your question is related to the previous answer"
-        )
-        
-        # Show previous context if it's a follow-up
-        if is_follow_up and st.session_state.chat_history:
-            last_chat = st.session_state.chat_history[-1]
-            with st.info('📝 Previous Question Context'):
-                st.write("**Previous Question:**")
-                st.write(last_chat['query'])
-                st.write("\n**Previous Answer:**")
-                st.write(last_chat['response'])
-        
-        # Query input
-        query = st.text_area(
-            "Enter your question:",
-            height=100,
-            placeholder="Ask anything about your documents...",
-            key="query_input"
-        )
-        
-        # Submit button
-        col1, col2, col3 = st.columns([1,2,1])
-        with col2:
-            if st.button("🔍 Submit Query", type="primary", use_container_width=True):
-                if query and query.strip():
-                    with st.spinner("🤔 Processing your query..."):
-                        process_query(query, agentic_workflow, "Standard", is_follow_up)
-                else:
-                    st.warning("Please enter a question")
-        
-        # Display chat history
-        if st.session_state.chat_history:
-            st.subheader("💬 Chat History")
-            for chat in reversed(st.session_state.chat_history[-5:]):  # Show last 5
-                with st.expander(f"Q: {chat['query'][:50]}..."):
-                    st.markdown(f"**Question:** {chat['query']}")
-                    st.markdown(f"**Answer:** {chat['response']}")
-                    if chat.get('sources'):
-                        st.markdown("**Sources:**")
-                        for source in chat['sources']:
-                            st.markdown(f"- {source}")
-    
     except Exception as e:
-        st.error(f"❌ Query interface error: {str(e)}")
-        logging.error(f"Query interface error: {str(e)}")
+        st.error(f"Error checking vector store: {str(e)}")
+        return
+    
+    # Initialize session state for query interface
+    if 'show_response' not in st.session_state:
+        st.session_state.show_response = False
+    if 'current_query' not in st.session_state:
+        st.session_state.current_query = None
+    
+    st.header("🔍 Query Interface")
+    st.markdown("Ask questions about your documents and get AI-powered answers with source citations.")
+    
+    # Follow-up checkbox
+    is_follow_up = st.checkbox(
+        "💬 Is this a follow-up question?"
+    )
+    
+    # Query input
+    user_query = st.text_area(
+        "Enter your question:",
+        placeholder="Ask anything about your documents...",
+        height=100
+    )
+    
+    # Search depth selector
+    search_depth = st.select_slider(
+        "Search depth:",
+        options=["Standard", "Deep", "Comprehensive"],
+        value="Standard",
+        help="Adjust how thoroughly to search through documents"
+    )
+    
+    # Submit button
+    if st.button("🔍 Submit Query", type="primary", use_container_width=True):
+        if not user_query:
+            st.warning("⚠️ Please enter a question")
+            return
+        
+        with st.spinner("🤖 Processing your query..."):
+            response = process_query(
+                query=user_query,
+                agentic_workflow=agentic_workflow,
+                search_depth=search_depth,
+                is_follow_up=is_follow_up
+            )
+            
+            if response:
+                try:
+                    st.markdown('<div class="response-section">', unsafe_allow_html=True)
+                    st.subheader("🎯 Answer")
+                    
+                    # Handle both string and dict responses
+                    if isinstance(response, dict):
+                        if "response" in response:
+                            st.markdown(response["response"])
+                        else:
+                            st.markdown(str(response))
+                        
+                        # Display sources if available
+                        if response.get("sources"):
+                            st.markdown("**📚 Sources:**")
+                            for source in response["sources"]:
+                                st.markdown(f"- {source}")
+                        
+                        # Display suggested follow-ups
+                        if response.get("suggested_follow_ups"):
+                            st.markdown("**💡 Suggested follow-up questions:**")
+                            for suggestion in response["suggested_follow_ups"]:
+                                if st.button(f"🔍 {suggestion}", key=f"follow_up_{hash(suggestion)}"):
+                                    return process_query(
+                                        query=suggestion,
+                                        agentic_workflow=agentic_workflow,
+                                        search_depth=search_depth,
+                                        is_follow_up=True
+                                    )
+                    else:
+                        st.markdown(str(response))
+                except Exception as e:
+                    st.error(f"Error displaying response: {str(e)}")
+                    logger.error(f"Error displaying response: {str(e)}")
 
 def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: str, is_follow_up: bool = False):
     """Process user query"""
-    
-    # Show processing status
-    with st.spinner("🤖 Analyzing your question and searching through documents..."):
-        
-        # Determine search parameters
-        k_map = {"Standard": 5, "Deep": 8, "Comprehensive": 12}
-        
-        # Prepare context for follow-up questions
-        context = None
+    try:
+        # Get conversation history
+        chat_history = []
         if is_follow_up and st.session_state.chat_history:
-            last_chat = st.session_state.chat_history[-1]
-            context = {
-                'last_question': last_chat['query'],
-                'last_answer': last_chat['response'],
-                'last_sources': last_chat.get('sources', [])
-            }
+            # Get last 3 messages for context
+            for msg in st.session_state.chat_history[-3:]:
+                if msg["role"] == "user":
+                    chat_history.append(HumanMessage(content=msg["content"]))
+                else:
+                    chat_history.append(AIMessage(content=msg["content"]))
         
-        # Run agentic workflow
-        results = agentic_workflow.run_workflow(query, context=context)
+        # Process query
+        response = agentic_workflow.run_workflow(
+            query=query,
+            chat_history=chat_history
+        )
         
-        if results["success"]:
-            # Display response
-            st.markdown('<div class="response-section">', unsafe_allow_html=True)
-            st.subheader("🎯 Answer")
-            st.markdown(results["response"])
+        if response:
+            # Add user message to chat history
+            st.session_state.chat_history.append({
+                "role": "user",
+                "content": query,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
             
-            # Add follow-up suggestions if available
-            if results.get("suggested_follow_ups"):
-                st.markdown("**💡 Suggested Follow-up Questions:**")
-                for suggestion in results["suggested_follow_ups"]:
-                    if st.button(f"🔍 {suggestion}", key=f"follow_up_{hash(suggestion)}"):
-                        process_query(suggestion, agentic_workflow, search_depth, True)
+            # Add assistant response to chat history
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": response,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
             
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Display sources
-            if results["sources"]:
-                st.subheader("📚 Sources")
-                for i, source in enumerate(results["sources"]):
-                    with st.expander(f"📄 Source {i+1}: {source.get('filename', 'Unknown')} (Relevance: {source.get('similarity_score', 0):.3f})"):
-                        st.markdown(f"**File:** {source.get('filename', 'Unknown')}")
-                        st.markdown(f"**Relevance Score:** {source.get('similarity_score', 0):.3f}")
-                        st.markdown(f"**Content Preview:**")
-                        st.text(source.get('content', 'No content available'))
-            
-            # Display analysis info
-            if results.get("analysis"):
-                with st.expander("🔍 Query Analysis Details"):
-                    analysis = results["analysis"]
-                    if "query_type" in analysis:
-                        st.write(f"**Query Type:** {analysis.get('query_type', 'Unknown')}")
-                    if "complexity" in analysis:
-                        st.write(f"**Complexity:** {analysis.get('complexity', 'Unknown')}")
-                    if "search_results_count" in results:
-                        st.write(f"**Sources Searched:** {results['search_results_count']}")
-            
-            # Store in chat history
-            chat_entry = {
-                'query': query,
-                'response': results["response"],
-                'sources': results["sources"],
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            st.session_state.chat_history.append(chat_entry)
-            
-            display_success_message("Question answered successfully!")
-            
-        else:
-            display_error_message(f"Error processing query: {results.get('error', 'Unknown error')}")
+            return response
+        return None
+    except Exception as e:
+        logger.error(f"Error processing query: {str(e)}")
+        raise
 
 def handle_knowledge_base(vector_store_manager: VectorStoreManager):
     """Handle knowledge base interface"""
     
     st.subheader("📊 Knowledge Base Status")
     
-    # Get store information
-    store_info = vector_store_manager.get_store_info()
-    
-    if store_info.get("initialized", False):
-        # Display statistics
-        col1, col2, col3, col4 = st.columns(4)
+    try:
+        # Get store information
+        store_info = vector_store_manager.get_store_info()
         
-        with col1:
-            st.metric("📄 Total Documents", store_info.get("total_documents", 0))
-        
-        with col2:
-            st.metric("🔢 Total Embeddings", store_info.get("total_embeddings", 0))
-        
-        with col3:
-            st.metric("📁 Unique Files", store_info.get("unique_files", 0))
-        
-        with col4:
-            avg_chunk_size = store_info.get("total_documents", 0)
-            st.metric("📋 Avg Chunk Size", f"{Config.CHUNK_SIZE}")
-        
+        if store_info.get("initialized", False):
+            # Display statistics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                st.metric("📄 Total Documents", store_info.get("total_documents", 0))
+            
+            with col2:
+                st.metric("🔢 Total Embeddings", store_info.get("total_embeddings", 0))
+            
+            with col3:
+                st.metric("📁 Unique Files", store_info.get("unique_files", 0))
+            
+            with col4:
+                st.metric("📋 Avg Chunk Size", f"{Config.CHUNK_SIZE}")
+            
+            # Display file list
+            if store_info.get("files", []):
+                st.subheader("📂 Processed Files")
+                for file_info in store_info["files"]:
+                    st.text(f"📄 {file_info}")
+            else:
+                st.info("⚠️ No files have been processed yet")
+        else:
+            st.warning("⚠️ Knowledge base is not initialized. Please process some documents first.")
+    except Exception as e:
+        st.error(f"Error accessing knowledge base: {str(e)}")
+        return
         # Display files
         if store_info.get("files"):
             st.subheader("📁 Files in Knowledge Base")
