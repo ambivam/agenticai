@@ -226,43 +226,69 @@ class AgenticWorkflow:
             search_results = state.get("search_results", [])
             context_synthesis = analysis.get("context_synthesis", "")
             
-            # Create response generation prompt
-            response_prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are an expert AI assistant providing detailed, accurate responses based on provided context.
+            # Check if this is a personal query about the user
+            is_personal_query = False
+            user_profile = state.get("context", {}).get("user_profile", {})
+            
+            # Keywords that indicate a personal query
+            personal_keywords = ["my name", "who am i", "what's my name", "what is my name"]
+            query_lower = query.lower()
+            
+            if any(keyword in query_lower for keyword in personal_keywords):
+                is_personal_query = True
+            
+            # Create response generation prompt based on query type
+            if is_personal_query and user_profile:
+                response_prompt = ChatPromptTemplate.from_messages([
+                    ("system", """You are a helpful AI assistant with access to the user's profile information.
+                    When answering personal questions about the user, prioritize their stored profile information.
+                    Be friendly and personable in your responses.
+                    """),
+                    ("human", """
+                    User Query: {query}
+                    
+                    User Profile Information:
+                    {user_profile}
+                    
+                    Please provide a personalized response based on the user's profile.
+                    """)
+                ])
+            else:
+                response_prompt = ChatPromptTemplate.from_messages([
+                    ("system", """You are an expert AI assistant providing detailed, accurate responses based on provided context.
 
-                Guidelines:
-                1. Answer the user's question comprehensively and accurately
-                2. Use information from the provided context and search results
-                3. Maintain a helpful and professional tone
-                4. Cite sources when making specific claims
-                5. If information is incomplete, acknowledge limitations
-                6. Structure your response clearly with appropriate formatting
-                7. Provide actionable insights when possible
-                
-                Always base your response on the provided context and search results.
-                """),
-                ("human", """
-                User Query: {query}
-                
-                Query Analysis: {analysis}
-                
-                Context Synthesis: {context_synthesis}
-                
-                Search Results:
-                {search_results}
-                
-                Please provide a comprehensive response to the user's query.
-                """)
-            ])
+                    Guidelines:
+                    1. Answer the user's question comprehensively and accurately
+                    2. Use information from the provided context and search results
+                    3. Maintain a helpful and professional tone
+                    4. Cite sources when making specific claims
+                    5. If information is incomplete, acknowledge limitations
+                    6. Structure your response clearly with appropriate formatting
+                    7. Provide actionable insights when possible
+                    
+                    Always base your response on the provided context and search results.
+                    """),
+                    ("human", """
+                    User Query: {query}
+                    
+                    Query Analysis: {analysis}
+                    
+                    Context Synthesis: {context_synthesis}
+                    
+                    Search Results:
+                    {search_results}
+                    
+                    Please provide a comprehensive response to the user's query.
+                    """)
+                ])
             
             # Format search results
             results_text = ""
             sources = []
             for i, result in enumerate(search_results):
-                results_text += f"\n--- Source {i+1} ---\n"
-                results_text += f"File: {result['filename']}\n"
-                results_text += f"Relevance Score: {result['similarity_score']:.3f}\n"
-                results_text += f"Content: {result['content'][:500]}...\n"
+                results_text += f"\n--- Result {i+1} (Score: {result['similarity_score']:.3f}) ---\n"
+                results_text += f"Source: {result['filename']}\n"
+                results_text += f"Content: {result['content']}\n"
                 
                 # Collect source information
                 sources.append({
@@ -273,14 +299,23 @@ class AgenticWorkflow:
                     "metadata": result['metadata']
                 })
             
-            response = self.llm.invoke(
-                response_prompt.format_messages(
-                    query=query,
-                    analysis=json.dumps(analysis, indent=2),
-                    context_synthesis=context_synthesis,
-                    search_results=results_text
+            # Generate response based on query type
+            if is_personal_query and user_profile:
+                response = self.llm.invoke(
+                    response_prompt.format_messages(
+                        query=query,
+                        user_profile=json.dumps(user_profile, indent=2)
+                    )
                 )
-            )
+            else:
+                response = self.llm.invoke(
+                    response_prompt.format_messages(
+                        query=query,
+                        analysis=json.dumps(analysis, indent=2),
+                        context_synthesis=context_synthesis,
+                        search_results=results_text
+                    )
+                )
             
             state["response"] = response.content
             state["sources"] = sources

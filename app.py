@@ -367,8 +367,8 @@ def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: s
         # Get conversation history
         chat_history = []
         if is_follow_up and st.session_state.chat_history:
-            # Get last 3 messages for context
-            for msg in st.session_state.chat_history[-3:]:
+            # Get last 10 messages for context to improve memory
+            for msg in st.session_state.chat_history[-10:]:
                 if msg["role"] == "user":
                     chat_history.append(HumanMessage(content=msg["content"]))
                 else:

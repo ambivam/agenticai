@@ -5,6 +5,7 @@ from agentic_workflow import AgenticWorkflow
 from vector_store import VectorStoreManager
 import logging
 from chat_memory import ChatMemory
+from user_profile import UserProfile
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -30,12 +31,15 @@ def display_chat_message(message: Dict[str, Any], is_user: bool):
 def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
     """Handle the chat interface section of the application"""
     try:
-        # Initialize chat memory
+        # Initialize chat memory and user profile
         chat_memory = ChatMemory()
+        user_profile = UserProfile()
         
         # Initialize session ID in session state if not exists
         if "session_id" not in st.session_state:
-            st.session_state.session_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+            # Generate a more persistent session ID that won't change on reload
+            import uuid
+            st.session_state.session_id = str(uuid.uuid4())
         
         # Initialize chat history in session state if not exists
         if "chat_history" not in st.session_state:
@@ -74,12 +78,18 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
             
             if submit_button and user_input:
                 # Add user message to chat history
-                user_message = {
+                st.session_state.chat_history.append({
                     "role": "user",
                     "content": user_input,
-                    "timestamp": st.session_state.get("current_time", "")
-                }
-                st.session_state.chat_history.append(user_message)
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+                
+                # Extract and update user profile information
+                user_info = user_profile.extract_user_info(user_input)
+                if user_info:
+                    current_profile = user_profile.get_profile(st.session_state.session_id)
+                    current_profile.update(user_info)
+                    user_profile.update_profile(st.session_state.session_id, current_profile)
                 
                 # Process query with context
                 with st.spinner("Thinking..."):
@@ -92,9 +102,13 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                             context.append(AIMessage(content=msg["content"]))
                     
                     # Get response
+                    # Get user profile
+                    user_profile_data = user_profile.get_profile(st.session_state.session_id)
+                    
                     response = agentic_workflow.run_workflow(
                         query=user_input,
-                        chat_history=context
+                        chat_history=context,
+                        context={"user_profile": user_profile_data}
                     )
                     
                     # Add assistant message to chat history
