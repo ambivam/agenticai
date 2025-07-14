@@ -36,7 +36,7 @@ class Config:
     MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
     SUPPORTED_FORMATS = [
         "pdf", "docx", "txt", "csv", "xlsx", "pptx", 
-        "json", "html", "xml", "doc", "xls", "ppt"
+        "json", "html", "xml", "doc", "xls", "ppt", "md"
     ]
     
     # UI Configuration

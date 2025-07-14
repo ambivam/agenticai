@@ -75,6 +75,8 @@ class DocumentProcessor:
                 text = self._process_html(uploaded_file)
             elif file_extension == 'xml':
                 text = self._process_xml(uploaded_file)
+            elif file_extension == 'md':
+                text = self._process_txt(uploaded_file)  # Process markdown as text
             else:
                 raise ValueError(f"Unsupported file format: {file_extension}")
             
