@@ -12,21 +12,47 @@ logger = logging.getLogger(__name__)
 
 def display_chat_message(message: Dict[str, Any], is_user: bool):
     """Display a chat message with appropriate styling"""
-    if is_user:
-        st.markdown(
-            f'<div class="chat-message user-message">👤 You: {message["content"]}</div>',
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            f'<div class="chat-message assistant-message">🤖 Assistant: {message["content"]}</div>',
-            unsafe_allow_html=True
-        )
-        if "sources" in message:
-            with st.expander("View Sources"):
-                for source in message["sources"]:
-                    st.markdown(f"📄 **{source['filename']}**")
-                    st.markdown(f"```\n{source['content']}\n```")
+    try:
+        # Get message content, handle both string and dict formats
+        content = message.get("content", "") if isinstance(message, dict) else str(message)
+        
+        if is_user:
+            st.markdown(
+                f'<div class="chat-message user-message">👤 You: {content}</div>',
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f'<div class="chat-message assistant-message">🤖 Assistant: {content}</div>',
+                unsafe_allow_html=True
+            )
+            
+            # Display sources if available
+            if isinstance(message, dict) and "sources" in message:
+                with st.expander("View Sources"):
+                    for source in message["sources"]:
+                        if isinstance(source, dict):
+                            # Handle different source types
+                            if source.get("type") == "local_docs":
+                                st.markdown(f"📄 **{source.get('filename', 'Unknown File')}**")
+                                if "content" in source:
+                                    st.markdown(f"```\n{source['content']}\n```")
+                            else:  # web_search, wikipedia, google
+                                st.markdown(f"🔗 **{source.get('title', 'Unknown Source')}**")
+                                if "url" in source:
+                                    st.markdown(f"[View Source]({source['url']})")
+                                if "snippet" in source:
+                                    st.markdown(f"```\n{source['snippet']}\n```")
+            
+            # Display follow-up suggestions if available
+            if isinstance(message, dict) and "suggested_follow_ups" in message:
+                with st.expander("💡 Suggested Follow-up Questions"):
+                    for suggestion in message["suggested_follow_ups"]:
+                        st.markdown(f"- {suggestion}")
+    
+    except Exception as e:
+        st.error(f"Error displaying message: {str(e)}")
+        st.markdown(f"```\nDebug - Message structure: {message}\n```")
 
 def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
     """Handle the chat interface section of the application"""
@@ -61,6 +87,26 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                     message,
                     isinstance(message, dict) and message.get("role") == "user"
                 )
+        
+        # Search source selection
+        st.write("📚 Select search sources:")
+        col1, col2 = st.columns(2)
+        with col1:
+            local_docs = st.checkbox("Local Documents", value=True, key="search_local_docs")
+            wikipedia = st.checkbox("Wikipedia", value=True, key="search_wikipedia")
+        with col2:
+            web_search = st.checkbox("Web Search (DuckDuckGo)", value=True, key="search_web")
+            google = st.checkbox("Google Search", value=True, key="search_google")
+        
+        # Store selected sources in session state
+        st.session_state.search_sources = [
+            source for source, enabled in [
+                ("local_docs", local_docs),
+                ("wikipedia", wikipedia),
+                ("web_search", web_search),
+                ("google", google)
+            ] if enabled
+        ]
         
         # Chat input
         with st.form(key="chat_form", clear_on_submit=True):
@@ -108,7 +154,10 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                     response = agentic_workflow.run_workflow(
                         query=user_input,
                         chat_history=context,
-                        context={"user_profile": user_profile_data}
+                        context={
+                            "user_profile": user_profile_data,
+                            "search_sources": st.session_state.search_sources
+                        }
                     )
                     
                     # Add assistant message to chat history

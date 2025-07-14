@@ -1,4 +1,3 @@
-
 import json
 from typing import Dict, List, Any, Optional, TypedDict
 from langchain_openai import ChatOpenAI
@@ -9,8 +8,25 @@ from langgraph.graph import StateGraph, END
 from langgraph.graph.message import MessageGraph
 from search_tools import SearchTools
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+def convert_numpy_types(obj):
+    """Convert numpy types to native Python types for JSON serialization"""
+    if isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_numpy_types(item) for item in obj)
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
 
 class AgentState(TypedDict):
     """State for the agentic workflow"""
@@ -70,12 +86,17 @@ class AgenticWorkflow:
             # Create analysis prompt
             analysis_prompt = ChatPromptTemplate.from_messages([
                 ("system", """You are an expert query analyzer. Analyze the user's query and provide:
-                1. Query type (factual, analytical, comparative, creative, etc.)
+                1. Query type (factual, analytical, comparative, creative, real-time, etc.)
                 2. Key concepts and entities
                 3. Search strategy recommendations
                 4. Complexity level (simple, moderate, complex)
                 5. Expected answer type (short, detailed, list, explanation, etc.)
-                6. Search sources to use (local_docs, wikipedia, web_search, or combinations)
+                6. Search sources to use (local_docs, wikipedia, web_search, google, or combinations)
+                
+                Special Instructions:
+                - For real-time information (weather, news, current events), use ["google", "web_search"] as sources
+                - For historical or general knowledge, use ["wikipedia", "web_search"]
+                - For project-specific or technical questions, use ["local_docs"]
                 
                 Respond in JSON format with these fields:
                 - query_type
@@ -85,7 +106,7 @@ class AgenticWorkflow:
                 - complexity
                 - expected_answer_type
                 - search_keywords
-                - search_sources: list of sources to search (e.g., ["local_docs", "wikipedia", "web_search"])
+                - search_sources: list of sources to search
                 """),
                 ("human", "Query: {query}")
             ])
@@ -110,7 +131,7 @@ class AgenticWorkflow:
                     "complexity": "moderate",
                     "expected_answer_type": "detailed",
                     "search_keywords": [query],
-                    "search_sources": ["local_docs"]
+                    "search_sources": ["google", "web_search"]
                 }
             
             # Update state
@@ -132,9 +153,14 @@ class AgenticWorkflow:
             
             # Get search keywords and sources
             search_keywords = state["analysis_results"].get("search_keywords", [])
-            search_sources = state["analysis_results"].get("search_sources", ["local_docs"])
-            if not search_keywords:
-                search_keywords = [state["query"]]
+            
+            # Get user-selected search sources or use defaults
+            context = state.get("context", {})
+            search_sources = context.get("search_sources", None)
+            if not search_sources:  # If no sources selected, use recommended ones from analysis
+                search_sources = state["analysis_results"].get("search_sources", ["local_docs"])
+                if not search_keywords:
+                    search_keywords = [state["query"]]
             
             search_results = []
             
@@ -243,7 +269,7 @@ class AgenticWorkflow:
             synthesis = self.llm.invoke(
                 synthesis_prompt.format_messages(
                     query=state["query"],
-                    analysis=json.dumps(analysis, indent=2),
+                    analysis=json.dumps(convert_numpy_types(analysis), indent=2),
                     context=results_text
                 )
             )
@@ -326,7 +352,7 @@ class AgenticWorkflow:
                 response = self.llm.invoke(
                     response_prompt.format_messages(
                         query=query,
-                        analysis=json.dumps(analysis, indent=2),
+                        analysis=json.dumps(convert_numpy_types(analysis), indent=2),
                         context=context
                     )
                 )

@@ -157,5 +157,5 @@ yarl==1.19.0
 zstandard==0.23.0
 
 # Search Tools
-duckduckgo_search==3.8.5
+duckduckgo-search==3.8.5
 google-api-python-client==2.108.0

@@ -103,9 +103,11 @@ class VectorStoreManager:
             # Perform similarity search with scores
             results = self.vector_store.similarity_search_with_score(query, k=k)
             
-            # Filter by score threshold if specified
+            # Convert scores to regular Python floats and filter by threshold
             if score_threshold > 0:
-                results = [(doc, score) for doc, score in results if score >= score_threshold]
+                results = [(doc, float(score)) for doc, score in results if float(score) >= score_threshold]
+            else:
+                results = [(doc, float(score)) for doc, score in results]
             
             logger.info(f"Similarity search returned {len(results)} results for query: {query[:50]}...")
             return results
