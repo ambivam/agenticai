@@ -39,6 +39,12 @@ class Config:
         "json", "html", "xml", "doc", "xls", "ppt", "md"
     ]
     
+    # Search Tool Configuration
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+    GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")  # Custom Search Engine ID
+    DUCKDUCKGO_RESULTS_COUNT = 5
+    WIKIPEDIA_RESULTS_COUNT = 3
+    
     # UI Configuration
     PAGE_TITLE = "🤖 Agentic RAG Assistant"
     PAGE_ICON = "🤖"

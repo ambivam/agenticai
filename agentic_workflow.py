@@ -7,6 +7,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import MessageGraph
+from search_tools import SearchTools
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class AgenticWorkflow:
             base_url=Config.OPENAI_BASE_URL
         )
         self.vector_store_manager = vector_store_manager
+        self.search_tools = SearchTools()
         self.workflow = self._create_workflow()
     
     def _create_workflow(self) -> StateGraph:
@@ -60,9 +62,12 @@ class AgenticWorkflow:
     
     def _analyze_query(self, state: AgentState) -> AgentState:
         """Analyze the user query to understand intent and plan search strategy"""
+        logger.info("Analyzing query...")
+        
         try:
-            logger.info("Analyzing query...")
+            query = state["query"]
             
+            # Create analysis prompt
             analysis_prompt = ChatPromptTemplate.from_messages([
                 ("system", """You are an expert query analyzer. Analyze the user's query and provide:
                 1. Query type (factual, analytical, comparative, creative, etc.)
@@ -70,6 +75,7 @@ class AgenticWorkflow:
                 3. Search strategy recommendations
                 4. Complexity level (simple, moderate, complex)
                 5. Expected answer type (short, detailed, list, explanation, etc.)
+                6. Search sources to use (local_docs, wikipedia, web_search, or combinations)
                 
                 Respond in JSON format with these fields:
                 - query_type
@@ -79,32 +85,39 @@ class AgenticWorkflow:
                 - complexity
                 - expected_answer_type
                 - search_keywords
+                - search_sources: list of sources to search (e.g., ["local_docs", "wikipedia", "web_search"])
                 """),
                 ("human", "Query: {query}")
             ])
             
-            response = self.llm.invoke(
-                analysis_prompt.format_messages(query=state["query"])
+            # Get analysis results
+            analysis = self.llm.invoke(
+                analysis_prompt.format_messages(
+                    query=query
+                )
             )
             
+            # Parse JSON response
             try:
-                analysis_results = json.loads(response.content)
+                analysis_results = json.loads(analysis.content)
             except json.JSONDecodeError:
-                # Fallback if JSON parsing fails
+                logger.error("Failed to parse analysis results as JSON")
                 analysis_results = {
-                    "query_type": "general",
-                    "key_concepts": [state["query"]],
+                    "query_type": "unknown",
+                    "key_concepts": [],
                     "entities": [],
-                    "search_strategy": "semantic_search",
+                    "search_strategy": "default",
                     "complexity": "moderate",
                     "expected_answer_type": "detailed",
-                    "search_keywords": state["query"].split()
+                    "search_keywords": [query],
+                    "search_sources": ["local_docs"]
                 }
             
+            # Update state
             state["analysis_results"] = analysis_results
-            state["current_step"] = "query_analysis_complete"
+            state["current_step"] = "query_analysis"
             
-            logger.info(f"Query analysis complete: {analysis_results.get('query_type', 'unknown')}")
+            logger.info("Query analysis complete")
             return state
             
         except Exception as e:
@@ -113,40 +126,72 @@ class AgenticWorkflow:
             return state
     
     def _search_documents(self, state: AgentState) -> AgentState:
-        """Search for relevant documents using vector similarity"""
+        """Search for relevant documents using vector similarity and web search"""
         try:
-            logger.info("Searching documents...")
+            logger.info("Searching documents and web sources...")
             
-            query = state["query"]
-            analysis = state.get("analysis_results", {})
+            # Get search keywords and sources
+            search_keywords = state["analysis_results"].get("search_keywords", [])
+            search_sources = state["analysis_results"].get("search_sources", ["local_docs"])
+            if not search_keywords:
+                search_keywords = [state["query"]]
             
-            # Determine search parameters based on analysis
-            k = 8 if analysis.get("complexity") == "complex" else 5
+            search_results = []
             
-            # Perform similarity search
-            search_results = self.vector_store_manager.similarity_search(
-                query=query,
-                k=k,
-                score_threshold=0.1
-            )
+            # Search local documents if requested
+            if "local_docs" in search_sources:
+                for keyword in search_keywords:
+                    results = self.vector_store_manager.similarity_search(
+                        keyword,
+                        k=3  # Get top 3 results per keyword
+                    )
+                    if results:
+                        for doc, score in results:
+                            search_results.append({
+                                "content": doc.page_content,
+                                "metadata": doc.metadata,
+                                "source": "local_docs",
+                                "score": score
+                            })
             
-            # Format search results
-            formatted_results = []
-            for i, (doc, score) in enumerate(search_results):
-                result = {
-                    "id": i,
-                    "content": doc.page_content,
-                    "metadata": doc.metadata,
-                    "similarity_score": float(score),
-                    "filename": doc.metadata.get("filename", "Unknown"),
-                    "chunk_id": doc.metadata.get("chunk_id", 0)
-                }
-                formatted_results.append(result)
+            # Search Wikipedia if requested
+            if "wikipedia" in search_sources:
+                for keyword in search_keywords:
+                    wiki_results = self.search_tools.search_wikipedia(keyword)
+                    for result in wiki_results:
+                        search_results.append({
+                            "content": result["summary"],
+                            "metadata": {"title": result["title"], "url": result["url"]},
+                            "source": "wikipedia"
+                        })
             
-            state["search_results"] = formatted_results
-            state["current_step"] = "document_search_complete"
+            # Search web (DuckDuckGo) if requested
+            if "web_search" in search_sources:
+                for keyword in search_keywords:
+                    web_results = self.search_tools.search_duckduckgo(keyword)
+                    for result in web_results:
+                        search_results.append({
+                            "content": result["body"],
+                            "metadata": {"title": result["title"], "url": result["url"]},
+                            "source": "web_search"
+                        })
             
-            logger.info(f"Document search complete: {len(formatted_results)} results found")
+            # Search Google if credentials are available
+            if "google" in search_sources and Config.GOOGLE_API_KEY:
+                for keyword in search_keywords:
+                    google_results = self.search_tools.search_google(keyword)
+                    for result in google_results:
+                        search_results.append({
+                            "content": result["snippet"],
+                            "metadata": {"title": result["title"], "url": result["url"]},
+                            "source": "google"
+                        })
+            
+            # Update state
+            state["search_results"] = search_results
+            state["current_step"] = "document_search"
+            
+            logger.info(f"Found {len(search_results)} relevant results from various sources")
             return state
             
         except Exception as e:
@@ -155,58 +200,57 @@ class AgenticWorkflow:
             return state
     
     def _synthesize_context(self, state: AgentState) -> AgentState:
-        """Synthesize context from search results"""
+        """Synthesize search results into a coherent context"""
+        logger.info("Synthesizing context...")
+        
         try:
-            logger.info("Synthesizing context...")
-            
-            search_results = state.get("search_results", [])
+            query = state["query"]
             analysis = state.get("analysis_results", {})
+            search_results = state.get("search_results", [])
             
-            if not search_results:
-                state["error"] = "No search results to synthesize"
-                return state
-            
-            # Create context synthesis prompt
+            # Create synthesis prompt
             synthesis_prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are an expert information synthesizer. Given search results and query analysis, 
-                create a comprehensive context summary that:
-                1. Identifies key themes and patterns
-                2. Highlights relevant facts and details
-                3. Notes any conflicting information
-                4. Organizes information logically
-                5. Maintains source attribution
+                ("system", """
+                You are an expert at synthesizing information from multiple sources.
+                Your task is to analyze the search results and create a coherent context summary
+                that will help in answering the user's query.
                 
-                Focus on information most relevant to answering the user's query.
+                Focus on:
+                1. Key facts and concepts
+                2. Relationships between different pieces of information
+                3. Any contradictions or gaps in the information
+                4. Relevance to the original query
                 """),
                 ("human", """
                 Query: {query}
-                Query Analysis: {analysis}
+                Analysis: {analysis}
                 
                 Search Results:
-                {search_results}
+                {context}
                 
-                Please synthesize this information into a coherent context summary.
+                Please provide a comprehensive response to the user's query.
+                Include relevant source attributions in your response.
                 """)
             ])
             
             # Format search results for synthesis
             results_text = ""
             for i, result in enumerate(search_results):
-                results_text += f"\n--- Result {i+1} (Score: {result['similarity_score']:.3f}) ---\n"
-                results_text += f"Source: {result['filename']}\n"
+                results_text += f"\n--- Result {i+1} ---\n"
                 results_text += f"Content: {result['content']}\n"
             
-            response = self.llm.invoke(
+            # Generate synthesis
+            synthesis = self.llm.invoke(
                 synthesis_prompt.format_messages(
                     query=state["query"],
                     analysis=json.dumps(analysis, indent=2),
-                    search_results=results_text
+                    context=results_text
                 )
             )
             
-            # Store synthesis results
-            state["analysis_results"]["context_synthesis"] = response.content
-            state["current_step"] = "context_synthesis_complete"
+            # Update state
+            state["context_synthesis"] = synthesis.content
+            state["current_step"] = "context_synthesis"
             
             logger.info("Context synthesis complete")
             return state
@@ -224,129 +268,98 @@ class AgenticWorkflow:
             query = state["query"]
             analysis = state.get("analysis_results", {})
             search_results = state.get("search_results", [])
-            context_synthesis = analysis.get("context_synthesis", "")
             
-            # Check if this is a personal query about the user
-            is_personal_query = False
-            user_profile = state.get("context", {}).get("user_profile", {})
+            # Format context from search results
+            context = ""
+            sources = []
             
-            # Keywords that indicate a personal query
-            personal_keywords = ["my name", "who am i", "what's my name", "what is my name"]
-            query_lower = query.lower()
+            for result in search_results:
+                content = result["content"]
+                metadata = result["metadata"]
+                source_type = result["source"]
+                
+                # Add to context based on source type
+                if source_type == "local_docs":
+                    context += f"\nSource: {metadata.get('filename', 'Unknown')}\n"
+                    context += f"Content: {content}\n"
+                    sources.append({
+                        "type": "document",
+                        "filename": metadata.get('filename', 'Unknown'),
+                        "chunk_id": metadata.get('chunk_id', 0),
+                        "similarity_score": result.get('score', 0)
+                    })
+                else:  # wikipedia, web_search, or google
+                    context += f"\nSource: {source_type.title()} - {metadata.get('title', 'Unknown')}\n"
+                    context += f"URL: {metadata.get('url', '')}\n"
+                    context += f"Content: {content}\n"
+                    sources.append({
+                        "type": source_type,
+                        "title": metadata.get('title', 'Unknown'),
+                        "url": metadata.get('url', '')
+                    })
             
-            if any(keyword in query_lower for keyword in personal_keywords):
-                is_personal_query = True
-            
-            # Create response generation prompt based on query type
-            if is_personal_query and user_profile:
-                response_prompt = ChatPromptTemplate.from_messages([
-                    ("system", """You are a helpful AI assistant with access to the user's profile information.
-                    When answering personal questions about the user, prioritize their stored profile information.
-                    Be friendly and personable in your responses.
-                    """),
-                    ("human", """
-                    User Query: {query}
-                    
-                    User Profile Information:
-                    {user_profile}
-                    
-                    Please provide a personalized response based on the user's profile.
-                    """)
-                ])
-            else:
-                response_prompt = ChatPromptTemplate.from_messages([
-                    ("system", """You are an expert AI assistant providing detailed, accurate responses based on provided context.
+            # Create response prompt
+            response_prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are an expert AI assistant providing detailed, accurate responses based on provided context.
 
                     Guidelines:
                     1. Answer the user's question comprehensively and accurately
-                    2. Use information from the provided context and search results
-                    3. Maintain a helpful and professional tone
-                    4. Cite sources when making specific claims
-                    5. If information is incomplete, acknowledge limitations
-                    6. Structure your response clearly with appropriate formatting
-                    7. Provide actionable insights when possible
+                    2. Use information from all relevant sources
+                    3. Cite sources when providing information
+                    4. If information is incomplete or uncertain, acknowledge this
+                    5. Maintain a professional, helpful tone
                     
-                    Always base your response on the provided context and search results.
-                    """),
-                    ("human", """
-                    User Query: {query}
-                    
-                    Query Analysis: {analysis}
-                    
-                    Context Synthesis: {context_synthesis}
+                    Query: {query}
+                    Analysis: {analysis}
                     
                     Search Results:
-                    {search_results}
+                    {context}
                     
                     Please provide a comprehensive response to the user's query.
-                    """)
-                ])
+                    Include relevant source attributions in your response.
+                    """),
+                ("human", "{query}")
+            ])
             
-            # Format search results
-            results_text = ""
-            sources = []
-            for i, result in enumerate(search_results):
-                results_text += f"\n--- Result {i+1} (Score: {result['similarity_score']:.3f}) ---\n"
-                results_text += f"Source: {result['filename']}\n"
-                results_text += f"Content: {result['content']}\n"
-                
-                # Collect source information
-                sources.append({
-                    "id": i + 1,
-                    "filename": result['filename'],
-                    "content": result['content'][:200] + "..." if len(result['content']) > 200 else result['content'],
-                    "similarity_score": result['similarity_score'],
-                    "metadata": result['metadata']
-                })
-            
-            # Generate response based on query type
-            if is_personal_query and user_profile:
-                response = self.llm.invoke(
-                    response_prompt.format_messages(
-                        query=query,
-                        user_profile=json.dumps(user_profile, indent=2)
-                    )
-                )
-            else:
+            try:
+                # Generate response
                 response = self.llm.invoke(
                     response_prompt.format_messages(
                         query=query,
                         analysis=json.dumps(analysis, indent=2),
-                        context_synthesis=context_synthesis,
-                        search_results=results_text
+                        context=context
                     )
                 )
-            
-            state["response"] = response.content
-            state["sources"] = sources
-            state["current_step"] = "response_generation_complete"
-            
-            # Generate suggested follow-up questions
-            follow_up_prompt = ChatPromptTemplate.from_messages([
-                ("system", """Based on the previous question and answer, suggest 3 relevant follow-up questions that would help explore the topic further or clarify important points. 
-                The questions should be concise and directly related to the context.
-                Format your response as a JSON array of strings."""),
-                ("human", "Question: {query}\nAnswer: {response}")
-            ])
-            
-            follow_up_response = self.llm.invoke(
-                follow_up_prompt.format_messages(
-                    query=state["query"],
-                    response=state["response"]
-                )
-            )
-            
-            try:
-                suggested_follow_ups = json.loads(follow_up_response.content)
-                if isinstance(suggested_follow_ups, list):
-                    state["suggested_follow_ups"] = suggested_follow_ups[:3]
-                else:
-                    state["suggested_follow_ups"] = []
-            except json.JSONDecodeError:
-                state["suggested_follow_ups"] = []
-            
-            logger.info("Response generation complete")
-            return state
+                
+                state["response"] = response.content
+                state["sources"] = sources
+                state["current_step"] = "response_generation"
+                
+                # Generate follow-up suggestions if not already a follow-up query
+                if not state.get("is_follow_up"):
+                    follow_up_prompt = ChatPromptTemplate.from_messages([
+                        ("system", "Based on the query and response, suggest 2-3 relevant follow-up questions.\n\nQuery: {query}\n\nResponse: {response}"),
+                        ("human", "What follow-up questions would be relevant?")
+                    ])
+                    
+                    follow_up_response = self.llm.invoke(
+                        follow_up_prompt.format_messages(
+                            query=query,
+                            response=response.content
+                        )
+                    )
+                    
+                    # Extract suggestions (one per line)
+                    suggestions = [q.strip() for q in follow_up_response.content.split('\n') if q.strip()]
+                    state["suggested_follow_ups"] = suggestions[:3]  # Limit to top 3
+                
+                logger.info("Response generation complete")
+                return state
+                
+            except Exception as e:
+                logger.error(f"Error in response generation: {str(e)}")
+                state["error"] = f"Response generation failed: {str(e)}"
+                return state
             
         except Exception as e:
             logger.error(f"Error in response generation: {str(e)}")
