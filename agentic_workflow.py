@@ -55,8 +55,8 @@ class AgentState(TypedDict, total=False):
 class AgenticWorkflow:
     """Agentic workflow for RAG using Langgraph"""
     
-    def __init__(self, openai_api_key: str):
-        """Initialize workflow with OpenAI API key"""
+    def __init__(self, openai_api_key: str, vector_store_manager=None):
+        """Initialize workflow with OpenAI API key and vector store manager"""
         self.config = Config
         self.llm = ChatOpenAI(
             model=Config.OPENAI_MODEL,
@@ -66,6 +66,7 @@ class AgenticWorkflow:
         self.memory = ChatMemory()
         self.current_session_id = None
         self.search_tools = SearchTools()
+        self.vector_store_manager = vector_store_manager
         self.workflow = self._create_workflow()
     
     def _create_workflow(self) -> StateGraph:
@@ -176,16 +177,61 @@ class AgenticWorkflow:
         try:
             # Get search configuration
             query = state["query"]
+            # Get search sources from state
             search_sources = state.get("search_sources", [])
             if not search_sources:
+                logger.warning("No search sources specified, defaulting to web_search")
                 search_sources = ["web_search"]
             
+            logger.info(f"Using search sources: {search_sources}")
             search_results = []
             
             # Search using configured sources
             for source in search_sources:
                 try:
-                    if source == "web_search":
+                    if source == "local_docs":
+                        if not self.vector_store_manager:
+                            logger.error("Vector store manager not initialized")
+                            continue
+                        
+                        if not self.vector_store_manager.has_documents():
+                            logger.warning("Vector store is empty, no documents to search")
+                            continue
+                        
+                        try:
+                            # Search local documents using vector store
+                            logger.info(f"Searching local documents for query: {query}")
+                            local_results = self.vector_store_manager.similarity_search(query, k=5)
+                            
+                            if local_results:
+                                # Process and add results
+                                processed_results = [
+                                    {
+                                        "content": doc.page_content,
+                                        "metadata": {
+                                            "filename": doc.metadata.get('filename', 'Unknown'),
+                                            "chunk": doc.metadata.get('chunk', 0),
+                                            "score": score
+                                        },
+                                        "source": "local_docs",
+                                        "source_name": "Local Document",
+                                        "title": doc.metadata.get('filename', 'Unknown')
+                                    }
+                                    for doc, score in local_results
+                                ]
+                                
+                                search_results.extend(processed_results)
+                                logger.info(f"Found {len(processed_results)} relevant local documents")
+                                
+                                # Log each result for debugging
+                                for i, result in enumerate(processed_results):
+                                    logger.info(f"Local Result {i+1}: {result['title']} (Score: {result['metadata']['score']:.3f})")
+                            else:
+                                logger.warning("No relevant local documents found")
+                        except Exception as e:
+                            logger.error(f"Error searching local documents: {str(e)}")
+                            continue
+                    elif source == "web_search":
                         # Search using DuckDuckGo
                         web_results = self.search_tools.search_duckduckgo(query, max_results=5)
                         search_results.extend([
@@ -318,10 +364,13 @@ class AgenticWorkflow:
                     # Add to sources list
                     if source_type == "local_docs":
                         source = {
-                            "type": source_type,
-                            "filename": metadata.get('filename', 'Unknown'),
+                            "source": source_type,  # Use consistent source field
+                            "metadata": {
+                                "filename": metadata.get('filename', 'Unknown'),
+                                "chunk": metadata.get('chunk', 0),
+                                "score": metadata.get('score', 0)
+                            },
                             "content": content,
-                            "similarity_score": result.get('score', 0),
                             "source_name": "Local Document"
                         }
                         context += f"\nFrom document '{metadata.get('filename', 'Unknown')}': {content}\n"
@@ -332,11 +381,10 @@ class AgenticWorkflow:
                             'google': 'Google'
                         }.get(source_type, source_type.title())
                         source = {
-                            "type": source_type,
+                            "source": source_type,  # Use consistent source field
                             "title": metadata.get('title', 'Unknown'),
                             "url": metadata.get('url', ''),
-                            "content": content,  # Store as content
-                            "snippet": content,  # Also store as snippet for backward compatibility
+                            "content": content,
                             "source_name": source_display_name
                         }
                         context += f"\nFrom {source_display_name} '{metadata.get('title', 'Unknown')}': {content}\n"
@@ -530,20 +578,33 @@ Make sure to maintain context from the previous conversation when answering. If 
             # Initialize state with required fields
             state: AgentState = {
                 "query": query,
-                "search_sources": search_sources if search_sources else ["web_search"],
                 "current_step": "start",
                 "session_id": self.current_session_id,
                 "chat_history": chat_history if chat_history else [],
-                "context": context if context else {},
-                # Optional fields
+                "error": None,
+                "suggested_follow_ups": []
+            }
+            
+            # Handle context and search sources
+            if context:
+                state["context"] = context
+                # Get search sources from context if provided
+                if "search_sources" in context:
+                    state["search_sources"] = context["search_sources"]
+                else:
+                    state["search_sources"] = search_sources if search_sources else ["web_search"]
+            else:
+                state["context"] = {}
+                state["search_sources"] = search_sources if search_sources else ["web_search"]
+            
+            # Initialize optional fields
+            state.update({
                 "is_follow_up": is_follow_up,
                 "search_results": [],
                 "analysis_results": {},
                 "response": "",
-                "sources": [],
-                "error": None,
-                "suggested_follow_ups": []
-            }
+                "sources": []
+            })
             
             # Run workflow
             final_state = self.workflow.invoke(state)

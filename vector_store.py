@@ -17,21 +17,39 @@ class VectorStoreManager:
     """Manage FAISS vector store for document embeddings"""
     
     def __init__(self, openai_api_key: str, vector_db_path: str = "./vector_store"):
-        self.openai_api_key = openai_api_key
-        self.vector_db_path = vector_db_path
-        self.embeddings = OpenAIEmbeddings(
-            openai_api_key=openai_api_key,
-            model=Config.OPENAI_EMBEDDING_MODEL,
-            base_url=Config.OPENAI_BASE_URL
-        )
-        self.vector_store = None
-        self.document_metadata = {}
-        
-        # Create directory if it doesn't exist
-        os.makedirs(vector_db_path, exist_ok=True)
-        
-        # Load existing vector store if available
-        self.load_vector_store()
+        try:
+            logger.info("Initializing VectorStoreManager...")
+            self.openai_api_key = openai_api_key
+            self.vector_db_path = vector_db_path
+            
+            # Validate API key
+            if not openai_api_key:
+                raise ValueError("OpenAI API key is required")
+            
+            logger.info("Creating OpenAI embeddings...")
+            self.embeddings = OpenAIEmbeddings(
+                openai_api_key=openai_api_key,
+                model=Config.OPENAI_EMBEDDING_MODEL,
+                base_url=Config.OPENAI_BASE_URL
+            )
+            
+            self.vector_store = None
+            self.document_metadata = {}
+            
+            # Create directory if it doesn't exist
+            os.makedirs(vector_db_path, exist_ok=True)
+            
+            # Load existing vector store if available
+            logger.info("Loading existing vector store...")
+            self.load_vector_store()
+            
+            # Log initialization status
+            store_info = self.get_store_info()
+            logger.info(f"Vector store initialized: {store_info}")
+            
+        except Exception as e:
+            logger.error(f"Error initializing VectorStoreManager: {str(e)}")
+            raise
     
     def add_documents(self, documents: List[Document], show_progress: bool = True) -> bool:
         """Add documents to vector store"""
@@ -96,9 +114,21 @@ class VectorStoreManager:
     ) -> List[Tuple[Document, float]]:
         """Perform similarity search with scores"""
         try:
+            # Validate vector store
             if self.vector_store is None:
                 logger.warning("Vector store not initialized")
                 return []
+            
+            # Validate query
+            if not query:
+                logger.warning("Empty query provided")
+                return []
+            
+            logger.info(f"Performing similarity search for query: {query[:50]}...")
+            
+            # Get store info for debugging
+            store_info = self.get_store_info()
+            logger.info(f"Vector store status: {store_info}")
             
             # Perform similarity search with scores
             results = self.vector_store.similarity_search_with_score(query, k=k)
@@ -109,7 +139,11 @@ class VectorStoreManager:
             else:
                 results = [(doc, float(score)) for doc, score in results]
             
-            logger.info(f"Similarity search returned {len(results)} results for query: {query[:50]}...")
+            # Log results
+            logger.info(f"Similarity search returned {len(results)} results")
+            for i, (doc, score) in enumerate(results):
+                logger.info(f"Result {i+1}: {doc.metadata.get('filename', 'Unknown')} (Score: {score:.3f})")
+            
             return results
             
         except Exception as e:

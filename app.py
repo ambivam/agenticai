@@ -109,9 +109,18 @@ def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manage
                     # Update vector store
                     if all_documents:
                         try:
-                            vector_store_manager.add_documents(all_documents)
-                            st.session_state.vector_store_initialized = True
-                            st.success("✨ Vector store updated successfully!")
+                            # Add documents to vector store
+                            success = vector_store_manager.add_documents(all_documents)
+                            if success:
+                                st.session_state.vector_store_initialized = True
+                                store_info = vector_store_manager.get_store_info()
+                                st.success(f"✨ Vector store updated successfully! Total documents: {store_info.get('total_documents', 0)}")
+                                
+                                # Clear uploaded files from session state
+                                st.session_state.uploaded_files = None
+                                st.experimental_rerun()
+                            else:
+                                st.error("Failed to add documents to vector store")
                         except Exception as e:
                             st.error(f"❌ Failed to update vector store: {str(e)}")
                             logging.error(f"Vector store error: {str(e)}")
@@ -137,49 +146,92 @@ def main():
         # Create sidebar
         create_sidebar_info()
         
+        # Ensure OpenAI API key is set
+        if not Config.OPENAI_API_KEY:
+            st.error("❌ OpenAI API key is not set. Please set it in your environment variables.")
+            return
+        
         # Initialize components
-        doc_processor = DocumentProcessor(
-            chunk_size=Config.CHUNK_SIZE,
-            chunk_overlap=Config.CHUNK_OVERLAP
-        )
-        
-        vector_store_manager = VectorStoreManager(
-            openai_api_key=Config.OPENAI_API_KEY,
-            vector_db_path=Config.VECTOR_DB_PATH
-        )
-        
-        agentic_workflow = AgenticWorkflow(
-            openai_api_key=Config.OPENAI_API_KEY
-        )
+        try:
+            doc_processor = DocumentProcessor(
+                chunk_size=Config.CHUNK_SIZE,
+                chunk_overlap=Config.CHUNK_OVERLAP
+            )
+            
+            # Ensure vector store path is absolute
+            vector_db_path = os.path.abspath(Config.VECTOR_DB_PATH)
+            os.makedirs(vector_db_path, exist_ok=True)
+            
+            vector_store_manager = VectorStoreManager(
+                openai_api_key=Config.OPENAI_API_KEY,
+                vector_db_path=vector_db_path
+            )
+            
+            # Check vector store status
+            store_info = vector_store_manager.get_store_info()
+            if store_info.get("initialized", False):
+                st.session_state.vector_store_initialized = True
+                logger.info(f"Vector store loaded with {store_info.get('total_documents', 0)} documents")
+            else:
+                logger.info("Vector store is empty")
+                
+            # Initialize workflow with vector store manager
+            agentic_workflow = AgenticWorkflow(
+                openai_api_key=Config.OPENAI_API_KEY,
+                vector_store_manager=vector_store_manager
+            )
+            
+            # Create tabs
+            chat_tab, query_tab, code_tab, kb_tab, settings_tab = st.tabs([
+                "💬 Chat", "🔍 Query Interface", "💻 Code Playground",
+                "📚 Knowledge Base", "⚙️ Settings"
+            ])
+            
+            # Handle each tab
+            with chat_tab:
+                handle_chat_interface(agentic_workflow, vector_store_manager)
+            
+            with query_tab:
+                handle_document_upload(doc_processor, vector_store_manager)
+            
+            with code_tab:
+                handle_repl_interface()
+            
+            with kb_tab:
+                handle_knowledge_base(vector_store_manager)
+            
+            with settings_tab:
+                handle_settings(vector_store_manager)
+                
+        except Exception as e:
+            st.error(f"Failed to initialize components: {str(e)}")
+            logger.error(f"Component initialization error: {str(e)}")
+            return
         
         # Document upload section (always visible)
-        handle_document_upload(doc_processor, vector_store_manager)
+        if not st.session_state.vector_store_initialized:
+            handle_document_upload(doc_processor, vector_store_manager)
         
-        # Main tabs
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "💬 Chat",
-            "📝 Query Interface",
-            "💻 Code Playground",
-            "📚 Knowledge Base",
-            "⚙️ Settings"
+        # Create tabs
+        chat_tab, query_tab, code_tab, kb_tab, settings_tab = st.tabs([
+            "💬 Chat", "🔍 Query Interface", "💻 Code Playground",
+            "📚 Knowledge Base", "⚙️ Settings"
         ])
         
-        with tab1:
+        # Handle each tab
+        with chat_tab:
             handle_chat_interface(agentic_workflow, vector_store_manager)
         
-        with tab2:
-            handle_query_interface(agentic_workflow, vector_store_manager)
+        with query_tab:
+            handle_document_upload(doc_processor, vector_store_manager)
         
-        with tab3:
-            handle_knowledge_base(vector_store_manager)
-        
-        with tab3:
+        with code_tab:
             handle_repl_interface()
-            
-        with tab4:
+        
+        with kb_tab:
             handle_knowledge_base(vector_store_manager)
-            
-        with tab5:
+        
+        with settings_tab:
             handle_settings(vector_store_manager)
         
     except Exception as e:
@@ -188,23 +240,6 @@ def main():
         st.info("Please check your configuration and try again.")
 
 
-    
-    if st.session_state.uploaded_files:
-        st.write(f"📄 {len(st.session_state.uploaded_files)} file(s) selected")
-        
-        # Display file information
-        for file in st.session_state.uploaded_files:
-            col1, col2, col3 = st.columns([3, 1, 1])
-            with col1:
-                st.write(f"📎 {file.name}")
-            with col2:
-                st.write(f"{format_file_size(file.size)}")
-            with col3:
-                st.write(f".{file.name.split('.')[-1].upper()}")
-        
-        # Process files button
-        if st.button("🚀 Process Documents", type="primary"):
-            process_documents(st.session_state.uploaded_files, doc_processor, vector_store_manager)
     
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -267,6 +302,9 @@ def process_documents(uploaded_files, doc_processor: DocumentProcessor, vector_s
             vector_store_manager.add_documents(all_documents)
             st.session_state.vector_store_initialized = True
             st.success("✨ Documents added to vector store successfully!")
+            # Clear uploaded files immediately after successful vector store update
+            st.session_state.uploaded_files = []
+            st.rerun()  # Refresh the UI
         except Exception as e:
             st.error(f"❌ Failed to add documents to vector store: {str(e)}")
             logging.error(f"Vector store error: {str(e)}")
@@ -372,20 +410,32 @@ def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: s
     """Process user query"""
     try:
         # Get conversation history
-        chat_history = []
-        if is_follow_up and st.session_state.chat_history:
-            # Get last 10 messages for context to improve memory
-            for msg in st.session_state.chat_history[-10:]:
-                if msg["role"] == "user":
-                    chat_history.append(HumanMessage(content=msg["content"]))
-                else:
-                    chat_history.append(AIMessage(content=msg["content"]))
-        
-        # Process query
-        response = agentic_workflow.run_workflow(
-            query=query,
-            chat_history=chat_history
-        )
+        try:
+            with st.spinner("Thinking..."):
+                # Get conversation context
+                context = []
+                for msg in st.session_state.chat_history[-3:]:  # Last 3 messages for context
+                    if msg.get("role") == "user":
+                        context.append(HumanMessage(content=msg["content"]))
+                    else:
+                        context.append(AIMessage(content=msg["content"]))
+                
+                # Get response
+                # Get user profile
+                user_profile_data = user_profile.get_profile(st.session_state.session_id)
+                
+                response = agentic_workflow.run_workflow(
+                    query=query,
+                    chat_history=context,
+                    context={
+                        "user_profile": user_profile_data,
+                        "search_sources": st.session_state.search_sources
+                    }
+                )
+        except Exception as e:
+            st.error(f"Error processing query: {str(e)}")
+            logger.error(f"Query processing error: {str(e)}")
+            return
         
         if response:
             # Add user message to chat history
@@ -409,9 +459,8 @@ def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: s
         raise
 
 def handle_knowledge_base(vector_store_manager: VectorStoreManager):
-    """Handle knowledge base interface"""
-    
-    st.subheader("📊 Knowledge Base Status")
+    """Handle the knowledge base section of the application"""
+    st.header("📚 Knowledge Base")
     
     try:
         # Get store information
@@ -419,58 +468,72 @@ def handle_knowledge_base(vector_store_manager: VectorStoreManager):
         
         if store_info.get("initialized", False):
             # Display statistics
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2 = st.columns(2)
             
             with col1:
-                st.metric("📄 Total Documents", store_info.get("total_documents", 0))
+                st.metric(
+                    "Total Documents",
+                    store_info.get("total_documents", 0)
+                )
             
             with col2:
-                st.metric("🔢 Total Embeddings", store_info.get("total_embeddings", 0))
+                st.metric(
+                    "Total Embeddings",
+                    store_info.get("total_embeddings", 0)
+                )
             
-            with col3:
-                st.metric("📁 Unique Files", store_info.get("unique_files", 0))
-            
-            with col4:
-                st.metric("📋 Avg Chunk Size", f"{Config.CHUNK_SIZE}")
-            
-            # Display file list
-            if store_info.get("files", []):
-                st.subheader("📂 Processed Files")
-                for file_info in store_info["files"]:
-                    st.text(f"📄 {file_info}")
+            # Show document list
+            st.subheader("📁 Document List")
+            if store_info.get("total_documents", 0) > 0:
+                st.info("Document listing coming soon...")
             else:
-                st.info("⚠️ No files have been processed yet")
+                st.info("ℹ️ No documents in knowledge base")
         else:
-            st.warning("⚠️ Knowledge base is not initialized. Please process some documents first.")
-    except Exception as e:
-        st.error(f"Error accessing knowledge base: {str(e)}")
-        return
-        # Display files
-        if store_info.get("files"):
-            st.subheader("📁 Files in Knowledge Base")
-            for file in store_info["files"]:
-                st.write(f"📎 {file}")
-        
-        # Search functionality
-        st.subheader("🔍 Search Knowledge Base")
-        search_query = st.text_input("Search documents:", placeholder="Enter search terms...")
-        
-        if search_query:
-            with st.spinner("Searching..."):
-                results = vector_store_manager.similarity_search(search_query, k=5)
-                
-                if results:
-                    st.write(f"Found {len(results)} relevant documents:")
-                    for i, (doc, score) in enumerate(results):
-                        with st.expander(f"Result {i+1} - {doc.metadata.get('filename', 'Unknown')} (Score: {score:.3f})"):
-                            st.write(f"**Content:**")
-                            st.text(doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content)
-                            st.write(f"**Metadata:** {doc.metadata}")
-                else:
-                    st.info("No relevant documents found.")
+            st.warning("⚠️ Knowledge base is empty. Please upload some documents first.")
     
-    else:
-        st.info("📚 Knowledge base is empty. Please upload documents first.")
+    except Exception as e:
+        st.error(f"Error displaying knowledge base: {str(e)}")
+        logger.error(f"Knowledge base error: {str(e)}")
+
+def handle_repl_interface():
+    """Handle the REPL interface section of the application"""
+    st.header("💻 Code Playground")
+    st.markdown("Coming soon...")
+
+def handle_settings(vector_store_manager: VectorStoreManager):
+    """Handle settings section of the application"""
+    st.header("⚙️ Settings")
+    
+    # Initialize debug mode in session state if not exists
+    if "debug_mode" not in st.session_state:
+        st.session_state.debug_mode = False
+    
+    # Debug mode toggle
+    debug_mode = st.checkbox("🔍 Debug Mode", value=st.session_state.debug_mode,
+                          help="Show additional debugging information in the chat interface")
+    
+    if debug_mode != st.session_state.debug_mode:
+        st.session_state.debug_mode = debug_mode
+        st.rerun()
+    
+    st.divider()
+    
+    # Vector store management
+    st.subheader("📂 Vector Store Management")
+    
+    # Display vector store info
+    store_info = vector_store_manager.get_store_info()
+    st.markdown(f"**Total Documents:** {store_info.get('total_documents', 0)}")
+    st.markdown(f"**Total Embeddings:** {store_info.get('total_embeddings', 0)}")
+    
+    # Clear vector store button
+    if st.button("🗑️ Clear Vector Store"):
+        if vector_store_manager.clear_vector_store():
+            st.session_state.vector_store_initialized = False
+            st.success("✨ Vector store cleared successfully!")
+            st.rerun()
+        else:
+            st.error("❌ Failed to clear vector store")
 
 def handle_settings(vector_store_manager: VectorStoreManager):
     """Handle settings interface"""
@@ -531,6 +594,54 @@ def handle_settings(vector_store_manager: VectorStoreManager):
     st.subheader("🔐 Environment Variables")
     st.write("**OPENAI_API_KEY:** " + ("✅ Set" if Config.OPENAI_API_KEY else "❌ Not Set"))
     st.write("**LANGCHAIN_API_KEY:** " + ("✅ Set" if Config.LANGCHAIN_API_KEY else "❌ Not Set (Optional)"))
+
+def main():
+    try:
+        # Initialize components
+        doc_processor = DocumentProcessor()
+        vector_store_manager = VectorStoreManager(openai_api_key=Config.OPENAI_API_KEY)
+        
+        # Initialize workflow with vector store manager
+        agentic_workflow = AgenticWorkflow(
+            openai_api_key=Config.OPENAI_API_KEY,
+            vector_store_manager=vector_store_manager
+        )
+        
+        # Initialize session state
+        initialize_session_state()
+        
+        # Create custom CSS
+        create_custom_css()
+        add_chat_styles()
+        
+        # Create sidebar
+        create_sidebar_info()
+        
+        # Create tabs
+        chat_tab, query_tab, code_tab, kb_tab, settings_tab = st.tabs([
+            "💬 Chat", "🔍 Query Interface", "💻 Code Playground",
+            "📚 Knowledge Base", "⚙️ Settings"
+        ])
+        
+        # Handle each tab
+        with chat_tab:
+            handle_chat_interface(agentic_workflow, vector_store_manager)
+        
+        with query_tab:
+            handle_document_upload(doc_processor, vector_store_manager)
+        
+        with code_tab:
+            handle_repl_interface()
+        
+        with kb_tab:
+            handle_knowledge_base(vector_store_manager)
+        
+        with settings_tab:
+            handle_settings(vector_store_manager)
+    
+    except Exception as e:
+        st.error(f"Application error: {str(e)}")
+        logger.error(f"Application error: {str(e)}")
 
 if __name__ == "__main__":
     main()

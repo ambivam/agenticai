@@ -37,25 +37,47 @@ def display_chat_message(message: Dict[str, Any], is_user: bool):
                         if isinstance(source, dict):
                             try:
                                 # Handle different source types
-                                if source.get("type") == "local_docs":
-                                    st.markdown(f"📄 **Local Document: {source.get('filename', 'Unknown File')}**")
-                                    if "content" in source:
-                                        st.markdown(f"```\n{source['content']}\n```")
+                                source_type = source.get('source') or source.get('type')
+                                
+                                if source_type == "local_docs":
+                                    # Get filename from metadata or directly
+                                    filename = source.get('metadata', {}).get('filename') or source.get('filename') or source.get('title')
+                                    if filename:
+                                        st.markdown(f"📄 **Local Document: {filename}**")
+                                        if "content" in source:
+                                            st.markdown(f"```\n{source['content']}\n```")
+                                        
+                                        # Get chunk and score from metadata
+                                        metadata = source.get('metadata', {})
+                                        chunk = metadata.get('chunk')
+                                        score = metadata.get('score')
+                                        if chunk or score:
+                                            info = []
+                                            if chunk:
+                                                info.append(f"Chunk {chunk}")
+                                            if score:
+                                                info.append(f"Score: {score:.3f}")
+                                            if info:
+                                                st.caption(" | ".join(info))
                                 else:  # External sources (Wikipedia, DuckDuckGo, Google)
-                                    source_name = source.get('source_name', source.get('type', 'Unknown').title())
-                                    st.markdown(f"🔗 **{source_name}: {source.get('title', 'Unknown')}**")
+                                    source_name = source.get('source_name') or source_type.title()
+                                    title = source.get('title', 'Unknown')
+                                    st.markdown(f"🔗 **{source_name}: {title}**")
+                                    
                                     if "url" in source:
                                         st.markdown(f"[View Source]({source['url']})")
+                                    
                                     # Show content from either content or snippet field
                                     content_to_show = source.get('content') or source.get('snippet')
                                     if content_to_show:
                                         st.markdown(f"```\n{content_to_show}\n```")
                                 
-                                # Debug information for each source
-                                st.markdown("<details><summary>Debug Info</summary>" + \
-                                           f"<pre>Source Type: {source.get('type', 'Unknown')}\n" + \
-                                           f"Source Name: {source.get('source_name', 'Unknown')}\n" + \
-                                           f"All Fields: {source}</pre></details>", unsafe_allow_html=True)
+                                # Only show debug info in development mode
+                                if st.session_state.get('debug_mode', False):
+                                    st.markdown("<details><summary>🔍 Debug Info</summary>" + \
+                                               f"<pre>Source Type: {source.get('type', 'Unknown')}\n" + \
+                                               f"Source Name: {source.get('source_name', 'Unknown')}\n" + \
+                                               f"All Fields: {source}</pre></details>", unsafe_allow_html=True)
                             except Exception as e:
                                 st.error(f"Error displaying source: {str(e)}\nSource data: {source}")
             
