@@ -285,7 +285,7 @@ class AgenticWorkflow:
             logger.error(f"Error in context synthesis: {str(e)}")
             state["error"] = f"Context synthesis failed: {str(e)}"
             return state
-    
+
     def _generate_response(self, state: AgentState) -> AgentState:
         """Generate the final response"""
         try:
@@ -309,9 +309,9 @@ class AgenticWorkflow:
                     context += f"\nSource: {metadata.get('filename', 'Unknown')}\n"
                     context += f"Content: {content}\n"
                     sources.append({
-                        "type": "document",
+                        "type": "local_docs",
                         "filename": metadata.get('filename', 'Unknown'),
-                        "chunk_id": metadata.get('chunk_id', 0),
+                        "content": content,
                         "similarity_score": result.get('score', 0)
                     })
                 else:  # wikipedia, web_search, or google
@@ -321,7 +321,8 @@ class AgenticWorkflow:
                     sources.append({
                         "type": source_type,
                         "title": metadata.get('title', 'Unknown'),
-                        "url": metadata.get('url', '')
+                        "url": metadata.get('url', ''),
+                        "snippet": content
                     })
             
             # Create response prompt
@@ -383,15 +384,15 @@ class AgenticWorkflow:
                 return state
                 
             except Exception as e:
-                logger.error(f"Error in response generation: {str(e)}")
+                logger.error(f"Error generating response: {str(e)}")
                 state["error"] = f"Response generation failed: {str(e)}"
                 return state
-            
+                
         except Exception as e:
-            logger.error(f"Error in response generation: {str(e)}")
+            logger.error(f"Error in response generation setup: {str(e)}")
             state["error"] = f"Response generation failed: {str(e)}"
             return state
-    
+
     def _quality_check(self, state: AgentState) -> AgentState:
         """Perform quality check on the generated response"""
         try:
@@ -437,7 +438,7 @@ class AgenticWorkflow:
             logger.error(f"Error in quality check: {str(e)}")
             state["error"] = f"Quality check failed: {str(e)}"
             return state
-    
+
     def run_workflow(self, query: str, chat_history: List[BaseMessage] = None, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Run the complete agentic workflow"""
         try:
