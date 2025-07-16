@@ -33,6 +33,7 @@ from document_processor import DocumentProcessor
 from vector_store import VectorStoreManager
 from agentic_workflow import AgenticWorkflow
 from chat_interface import handle_chat_interface, add_chat_styles
+from repl_interface import handle_repl_interface
 
 # Initialize session state
 def initialize_session_state():
@@ -148,17 +149,17 @@ def main():
         )
         
         agentic_workflow = AgenticWorkflow(
-            openai_api_key=Config.OPENAI_API_KEY,
-            vector_store_manager=vector_store_manager
+            openai_api_key=Config.OPENAI_API_KEY
         )
         
         # Document upload section (always visible)
         handle_document_upload(doc_processor, vector_store_manager)
         
         # Main tabs
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "💬 Chat",
             "📝 Query Interface",
+            "💻 Code Playground",
             "📚 Knowledge Base",
             "⚙️ Settings"
         ])
@@ -172,7 +173,13 @@ def main():
         with tab3:
             handle_knowledge_base(vector_store_manager)
         
+        with tab3:
+            handle_repl_interface()
+            
         with tab4:
+            handle_knowledge_base(vector_store_manager)
+            
+        with tab5:
             handle_settings(vector_store_manager)
         
     except Exception as e:

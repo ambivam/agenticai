@@ -28,9 +28,15 @@ class Config:
     MEMORY_TYPE = os.getenv("MEMORY_TYPE", "sqlite")
     MEMORY_PATH = os.getenv("MEMORY_PATH", "./data/memory.db")
     MEMORY_TABLE = os.getenv("MEMORY_TABLE", "chat_memory")
+    CHAT_HISTORY_TABLE = os.getenv("CHAT_HISTORY_TABLE", "chat_history")
+    CONTEXT_TABLE = os.getenv("CONTEXT_TABLE", "chat_context")
     # Memory TTL in hours
     memory_ttl_str = os.getenv("MEMORY_TTL", "24")
     MEMORY_TTL = int(memory_ttl_str.split('#')[0].strip())  # Extract number before any comments
+    # Chat history settings
+    MAX_HISTORY_MESSAGES = 50  # Maximum number of messages to keep in history
+    CONTEXT_WINDOW_MESSAGES = 10  # Number of previous messages to include for context
+    SUMMARY_TRIGGER_LENGTH = 5  # Number of messages after which to generate a summary
     
     # File Upload Configuration
     MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
@@ -49,6 +55,29 @@ class Config:
     PAGE_TITLE = "🤖 Agentic RAG Assistant"
     PAGE_ICON = "🤖"
     LAYOUT = "wide"
+    
+    # REPL Configuration
+    REPL_ENABLED = True
+    SUPPORTED_REPL_LANGUAGES = [
+        "python",
+        "javascript",
+        "typescript"
+    ]
+    REPL_TIMEOUT_SECONDS = 30
+    REPL_MAX_OUTPUT_LENGTH = 5000  # Maximum characters of output to display
+    # Security settings for REPL
+    REPL_BLOCKED_MODULES = [
+        "os", "sys", "subprocess", "pathlib",  # System access
+        "socket", "requests", "urllib",  # Network access
+        "shutil", "glob"  # File operations
+    ]
+    REPL_ALLOWED_PACKAGES = [
+        # Python data science & utilities
+        "numpy", "pandas", "matplotlib", "seaborn",
+        "sklearn", "scipy", "math", "random", "datetime",
+        # JavaScript/TypeScript utilities
+        "lodash", "moment", "axios", "react", "vue"
+    ]
     
     @classmethod
     def validate_openai_key(cls):
