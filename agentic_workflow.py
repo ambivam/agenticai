@@ -177,7 +177,8 @@ class AgenticWorkflow:
                                 "content": doc.page_content,
                                 "metadata": doc.metadata,
                                 "source": "local_docs",
-                                "score": score
+                                "score": score,
+                                "source_name": "Local Document"
                             })
             
             # Search Wikipedia if requested
@@ -188,7 +189,8 @@ class AgenticWorkflow:
                         search_results.append({
                             "content": result["summary"],
                             "metadata": {"title": result["title"], "url": result["url"]},
-                            "source": "wikipedia"
+                            "source": "wikipedia",
+                            "source_name": "Wikipedia"
                         })
             
             # Search web (DuckDuckGo) if requested
@@ -199,7 +201,8 @@ class AgenticWorkflow:
                         search_results.append({
                             "content": result["body"],
                             "metadata": {"title": result["title"], "url": result["url"]},
-                            "source": "web_search"
+                            "source": "web_search",
+                            "source_name": "DuckDuckGo"
                         })
             
             # Search Google if credentials are available
@@ -210,7 +213,8 @@ class AgenticWorkflow:
                         search_results.append({
                             "content": result["snippet"],
                             "metadata": {"title": result["title"], "url": result["url"]},
-                            "source": "google"
+                            "source": "google",
+                            "source_name": "Google"
                         })
             
             # Update state
@@ -227,9 +231,9 @@ class AgenticWorkflow:
     
     def _synthesize_context(self, state: AgentState) -> AgentState:
         """Synthesize search results into a coherent context"""
-        logger.info("Synthesizing context...")
-        
         try:
+            logger.info("Synthesizing context...")
+            
             query = state["query"]
             analysis = state.get("analysis_results", {})
             search_results = state.get("search_results", [])
@@ -287,114 +291,99 @@ class AgenticWorkflow:
             return state
 
     def _generate_response(self, state: AgentState) -> AgentState:
-        """Generate the final response"""
+        """Generate the final response using the LLM"""
         try:
-            logger.info("Generating response...")
-            
-            query = state["query"]
-            analysis = state.get("analysis_results", {})
-            search_results = state.get("search_results", [])
-            
             # Format context from search results
-            context = ""
+            search_results = state.get("search_results", [])
             sources = []
+            context = ""
             
             for result in search_results:
-                content = result["content"]
-                metadata = result["metadata"]
-                source_type = result["source"]
-                
-                # Add to context based on source type
-                if source_type == "local_docs":
-                    context += f"\nSource: {metadata.get('filename', 'Unknown')}\n"
-                    context += f"Content: {content}\n"
-                    sources.append({
-                        "type": "local_docs",
-                        "filename": metadata.get('filename', 'Unknown'),
-                        "content": content,
-                        "similarity_score": result.get('score', 0)
-                    })
-                else:  # wikipedia, web_search, or google
-                    context += f"\nSource: {source_type.title()} - {metadata.get('title', 'Unknown')}\n"
-                    context += f"URL: {metadata.get('url', '')}\n"
-                    context += f"Content: {content}\n"
-                    sources.append({
-                        "type": source_type,
-                        "title": metadata.get('title', 'Unknown'),
-                        "url": metadata.get('url', ''),
-                        "snippet": content
-                    })
+                try:
+                    content = result["content"]
+                    metadata = result["metadata"]
+                    source_type = result["source"]
+                    
+                    if source_type == "local_docs":
+                        source = {
+                            "type": "local_docs",
+                            "filename": metadata.get('filename', 'Unknown'),
+                            "content": content,
+                            "similarity_score": result.get('score', 0),
+                            "source_name": "Local Document"
+                        }
+                        context += f"\nFrom document '{metadata.get('filename', 'Unknown')}': {content}\n"
+                    else:
+                        source_display_name = {
+                            'wikipedia': 'Wikipedia',
+                            'web_search': 'DuckDuckGo',
+                            'google': 'Google'
+                        }.get(source_type, source_type.title())
+                        
+                        source = {
+                            "type": source_type,
+                            "title": metadata.get('title', 'Unknown'),
+                            "url": metadata.get('url', ''),
+                            "content": content,  # Store as content
+                            "snippet": content,  # Also store as snippet for backward compatibility
+                            "source_name": source_display_name
+                        }
+                        context += f"\nFrom {source_display_name} '{metadata.get('title', 'Unknown')}': {content}\n"
+                    
+                    sources.append(source)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing search result: {str(e)}")
+                    continue
             
             # Create response prompt
             response_prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are an expert AI assistant providing detailed, accurate responses based on provided context.
-
-                    Guidelines:
-                    1. Answer the user's question comprehensively and accurately
-                    2. Use information from all relevant sources
-                    3. Cite sources when providing information
-                    4. If information is incomplete or uncertain, acknowledge this
-                    5. Maintain a professional, helpful tone
-                    
-                    Query: {query}
-                    Analysis: {analysis}
-                    
-                    Search Results:
-                    {context}
-                    
-                    Please provide a comprehensive response to the user's query.
-                    Include relevant source attributions in your response.
-                    """),
+                ("system", "You are a helpful assistant. Use the following context to answer the user's question. Include relevant information from the context, but do not make up information. If you cannot find relevant information in the context, say so.\n\nContext:\n{context}\n\nAnalysis:\n{analysis}"),
                 ("human", "{query}")
             ])
             
-            try:
-                # Generate response
-                response = self.llm.invoke(
-                    response_prompt.format_messages(
-                        query=query,
-                        analysis=json.dumps(convert_numpy_types(analysis), indent=2),
-                        context=context
+            # Generate response
+            response = self.llm.invoke(
+                response_prompt.format_messages(
+                    query=state["query"],
+                    context=context,
+                    analysis=json.dumps(state.get("analysis_results", {}), indent=2)
+                )
+            )
+            
+            # Extract response content
+            response_content = response.content if hasattr(response, 'content') else str(response)
+            state["response"] = response_content
+            state["sources"] = sources
+            state["current_step"] = "response_generated"
+            
+            # Generate follow-up suggestions
+            if not state.get("is_follow_up"):
+                follow_up_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "Based on the query and response, suggest 2-3 relevant follow-up questions.\n\nQuery: {query}\n\nResponse: {response}"),
+                    ("human", "What follow-up questions would be relevant?")
+                ])
+                
+                follow_up_response = self.llm.invoke(
+                    follow_up_prompt.format_messages(
+                        query=state["query"],
+                        response=response_content
                     )
                 )
                 
-                state["response"] = response.content
-                state["sources"] = sources
-                state["current_step"] = "response_generation"
-                
-                # Generate follow-up suggestions if not already a follow-up query
-                if not state.get("is_follow_up"):
-                    follow_up_prompt = ChatPromptTemplate.from_messages([
-                        ("system", "Based on the query and response, suggest 2-3 relevant follow-up questions.\n\nQuery: {query}\n\nResponse: {response}"),
-                        ("human", "What follow-up questions would be relevant?")
-                    ])
-                    
-                    follow_up_response = self.llm.invoke(
-                        follow_up_prompt.format_messages(
-                            query=query,
-                            response=response.content
-                        )
-                    )
-                    
-                    # Extract suggestions (one per line)
-                    suggestions = [q.strip() for q in follow_up_response.content.split('\n') if q.strip()]
-                    state["suggested_follow_ups"] = suggestions[:3]  # Limit to top 3
-                
-                logger.info("Response generation complete")
-                return state
-                
-            except Exception as e:
-                logger.error(f"Error generating response: {str(e)}")
-                state["error"] = f"Response generation failed: {str(e)}"
-                return state
-                
+                # Extract suggestions (one per line)
+                suggestions = [q.strip() for q in follow_up_response.content.split('\n') if q.strip()]
+                state["suggested_follow_ups"] = suggestions[:3]  # Limit to top 3
+            
+            return state
+            
         except Exception as e:
-            logger.error(f"Error in response generation setup: {str(e)}")
+            logger.error(f"Error in response generation: {str(e)}")
             state["error"] = f"Response generation failed: {str(e)}"
             return state
 
     def _quality_check(self, state: AgentState) -> AgentState:
-        """Perform quality check on the generated response"""
+        """Perform quality checks on the generated response"""
         try:
             logger.info("Performing quality check...")
             
@@ -485,5 +474,6 @@ class AgenticWorkflow:
                 "search_results_count": 0,
                 "current_step": "error",
                 "error": str(e),
-                "success": False
+                "success": False,
+                "suggested_follow_ups": []
             }

@@ -29,20 +29,35 @@ def display_chat_message(message: Dict[str, Any], is_user: bool):
             
             # Display sources if available
             if isinstance(message, dict) and "sources" in message:
-                with st.expander("View Sources"):
+                # Debug information
+                logger.info(f"Sources available in message: {message['sources']}")
+                
+                with st.expander("📚 Sources Used in Response", expanded=True):  # Auto-expand sources
                     for source in message["sources"]:
                         if isinstance(source, dict):
-                            # Handle different source types
-                            if source.get("type") == "local_docs":
-                                st.markdown(f"📄 **{source.get('filename', 'Unknown File')}**")
-                                if "content" in source:
-                                    st.markdown(f"```\n{source['content']}\n```")
-                            else:  # web_search, wikipedia, google
-                                st.markdown(f"🔗 **{source.get('title', 'Unknown Source')}**")
-                                if "url" in source:
-                                    st.markdown(f"[View Source]({source['url']})")
-                                if "snippet" in source:
-                                    st.markdown(f"```\n{source['snippet']}\n```")
+                            try:
+                                # Handle different source types
+                                if source.get("type") == "local_docs":
+                                    st.markdown(f"📄 **Local Document: {source.get('filename', 'Unknown File')}**")
+                                    if "content" in source:
+                                        st.markdown(f"```\n{source['content']}\n```")
+                                else:  # External sources (Wikipedia, DuckDuckGo, Google)
+                                    source_name = source.get('source_name', source.get('type', 'Unknown').title())
+                                    st.markdown(f"🔗 **{source_name}: {source.get('title', 'Unknown')}**")
+                                    if "url" in source:
+                                        st.markdown(f"[View Source]({source['url']})")
+                                    # Show content from either content or snippet field
+                                    content_to_show = source.get('content') or source.get('snippet')
+                                    if content_to_show:
+                                        st.markdown(f"```\n{content_to_show}\n```")
+                                
+                                # Debug information for each source
+                                st.markdown("<details><summary>Debug Info</summary>" + \
+                                           f"<pre>Source Type: {source.get('type', 'Unknown')}\n" + \
+                                           f"Source Name: {source.get('source_name', 'Unknown')}\n" + \
+                                           f"All Fields: {source}</pre></details>", unsafe_allow_html=True)
+                            except Exception as e:
+                                st.error(f"Error displaying source: {str(e)}\nSource data: {source}")
             
             # Display follow-up suggestions if available
             if isinstance(message, dict) and "suggested_follow_ups" in message:
@@ -164,8 +179,13 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                     assistant_message = {
                         "role": "assistant",
                         "content": response["response"],
-                        "sources": response["sources"],
-                        "timestamp": st.session_state.get("current_time", "")
+                        "sources": [{
+                            **source,
+                            "type": source.get("source", "unknown"),  # Ensure type is set from source
+                            "source_name": source.get("source_name", source.get("source", "Unknown").title())  # Ensure source_name is set
+                        } for source in response["sources"]],
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "suggested_follow_ups": response.get("suggested_follow_ups", [])
                     }
                     
                     # If there are suggested follow-ups, add them
