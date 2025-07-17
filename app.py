@@ -53,6 +53,8 @@ def initialize_session_state():
         st.session_state.query_submitted = False
     if 'is_follow_up' not in st.session_state:
         st.session_state.is_follow_up = False
+    if 'score_threshold' not in st.session_state:
+        st.session_state.score_threshold = 0.1  # Default similarity threshold
 
 def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manager: VectorStoreManager):
     """Handle document upload interface"""

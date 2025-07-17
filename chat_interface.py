@@ -31,6 +31,25 @@ def display_chat_message(message: Dict[str, Any], is_user: bool):
 def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
     """Handle the chat interface section of the application"""
     try:
+        st.header("💬 Chat Interface")
+        st.markdown("Chat with your documents using natural language.")
+        
+        # Search Settings in a collapsible section
+        with st.expander("🔍 Search Settings", expanded=False):
+            if "score_threshold" not in st.session_state:
+                st.session_state.score_threshold = 0.5
+            new_threshold = st.slider(
+                "Similarity Score Threshold",
+                min_value=0.0,
+                max_value=1.0,
+                value=st.session_state.score_threshold,
+                step=0.05,
+                help="Adjust the minimum similarity score required for search results. Lower values show more results but may be less relevant."
+            )
+            if new_threshold != st.session_state.score_threshold:
+                st.session_state.score_threshold = new_threshold
+                st.success(f"✅ Search threshold updated to {new_threshold}")
+        
         # Initialize chat memory and user profile
         chat_memory = ChatMemory()
         user_profile = UserProfile()
@@ -108,7 +127,10 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                     response = agentic_workflow.run_workflow(
                         query=user_input,
                         chat_history=context,
-                        context={"user_profile": user_profile_data}
+                        context={
+                            "user_profile": user_profile_data,
+                            "score_threshold": st.session_state.score_threshold
+                        }
                     )
                     
                     # Add assistant message to chat history
