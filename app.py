@@ -189,11 +189,18 @@ def main():
         for file in st.session_state.uploaded_files:
             col1, col2, col3 = st.columns([3, 1, 1])
             with col1:
-                st.write(f"📎 {file.name}")
+                # Get knowledge base status for this file
+                store_info = vector_store_manager.get_store_info()
+                kb_files = store_info.get('files', [])
+                if file.name in kb_files:
+                    st.write(f"📎 {file.name} (In Knowledge Base)")
+                else:
+                    st.write(f"📎 {file.name} (Not Indexed)")
             with col2:
                 st.write(f"{format_file_size(file.size)}")
             with col3:
-                st.write(f".{file.name.split('.')[-1].upper()}")
+                file_type = get_file_type(file.name)
+                st.write(f"{file_type}")
         
         # Process files button
         if st.button("🚀 Process Documents", type="primary"):
@@ -342,7 +349,17 @@ def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manag
                         if response.get("sources"):
                             st.markdown("**📚 Sources:**")
                             for source in response["sources"]:
-                                st.markdown(f"- {source}")
+                                if isinstance(source, dict):
+                                    source_name = source.get("source_name")
+                                    score = source.get("similarity_score", source.get("score", 0))
+                                    if source_name:
+                                        st.markdown(f"- {source_name} (Score: {score:.2f})")
+                                    else:
+                                        metadata = source.get("metadata", {})
+                                        filename = metadata.get("source") or metadata.get("filename", "Unknown")
+                                        st.markdown(f"- Local Document: {filename} (Score: {score:.2f})")
+                                else:
+                                    st.markdown(f"- {source}")
                         
                         # Display suggested follow-ups
                         if response.get("suggested_follow_ups"):

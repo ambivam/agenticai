@@ -52,6 +52,7 @@ class DocumentProcessor:
             # Create metadata
             metadata = {
                 "filename": uploaded_file.name,
+                "source": uploaded_file.name,  # Add source field for compatibility
                 "file_type": file_extension,
                 "file_size": uploaded_file.size
             }

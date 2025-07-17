@@ -164,26 +164,35 @@ class AgenticWorkflow:
             
             search_results = []
             
-            # Search local documents if requested
+            # Vector store search
             if "local_docs" in search_sources:
-                for keyword in search_keywords:
-                    results = self.vector_store_manager.similarity_search(
-                        keyword,
-                        k=3  # Get top 3 results per keyword
-                    )
-                    if results:
-                        for doc, score in results:
-                            search_results.append({
-                                "content": doc.page_content,
-                                "metadata": doc.metadata,
-                                "source": "local_docs",
-                                "score": score,
-                                "source_name": "Local Document"
-                            })
+                vector_results = self.vector_store_manager.similarity_search(state["query"])
+                if vector_results:
+                    for doc, score in vector_results:
+                        # Get filename from metadata
+                        metadata = doc.metadata or {}
+                        filename = metadata.get('source') or metadata.get('filename', 'Unknown Document')
+                        
+                        result = {
+                            "content": doc.page_content,
+                            "metadata": {**metadata, 'filename': filename},
+                            "source": "local_docs",
+                            "score": float(score),
+                            "source_name": f"Local Document: {filename}"
+                        }
+                        search_results.append(result)
             
             # Search Wikipedia if requested
             if "wikipedia" in search_sources:
-                for keyword in search_keywords:
+                wiki_results = self.search_tools.search_wikipedia(state["query"])
+                wiki_results = self.search_tools.search_wikipedia(query)
+                for result in wiki_results:
+                    search_results.append({
+                        "content": result["summary"],
+                        "metadata": {"title": result["title"], "url": result["url"]},
+                        "source": "wikipedia",
+                        "source_name": "Wikipedia"
+                    })
                     wiki_results = self.search_tools.search_wikipedia(keyword)
                     for result in wiki_results:
                         search_results.append({
@@ -305,14 +314,16 @@ class AgenticWorkflow:
                     source_type = result["source"]
                     
                     if source_type == "local_docs":
+                        # Get filename from metadata
+                        filename = metadata.get('source') or metadata.get('filename', 'Unknown')
                         source = {
                             "type": "local_docs",
-                            "filename": metadata.get('filename', 'Unknown'),
+                            "metadata": metadata,  # Include full metadata
                             "content": content,
                             "similarity_score": result.get('score', 0),
-                            "source_name": "Local Document"
+                            "source_name": f"Local Document: {filename}"
                         }
-                        context += f"\nFrom document '{metadata.get('filename', 'Unknown')}': {content}\n"
+                        context += f"\nFrom document '{filename}': {content}\n"
                     else:
                         source_display_name = {
                             'wikipedia': 'Wikipedia',
