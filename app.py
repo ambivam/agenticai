@@ -275,6 +275,22 @@ def process_documents(uploaded_files, doc_processor: DocumentProcessor, vector_s
 def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
     """Handle the query interface section of the application"""
     try:
+        # Initialize chat memory and user profile
+        chat_memory = ChatMemory()
+        user_profile = UserProfile()
+        
+        # Initialize session ID if not exists
+        if "session_id" not in st.session_state:
+            st.session_state.session_id = str(uuid.uuid4())
+            
+        # Initialize conversation ID if not exists
+        if "conversation_id" not in st.session_state:
+            st.session_state.conversation_id = str(uuid.uuid4())
+            
+        # Initialize chat history
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = chat_memory.get_chat_history(st.session_state.session_id) or []
+            
         # Check if vector store has documents
         if not vector_store_manager.has_documents():
             st.warning("⚠️ Please upload and process some documents first")
@@ -359,22 +375,41 @@ def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manag
                         st.markdown(str(response))
                 except Exception as e:
                     st.error(f"Error displaying response: {str(e)}")
-                    logger.error(f"Error displaying response: {str(e)}")
-
 def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: str, is_follow_up: bool = False):
     """Process user query"""
     try:
-        # Get conversation history
-        chat_history = []
-        if is_follow_up and st.session_state.chat_history:
-            # Get last 10 messages for context to improve memory
-            for msg in st.session_state.chat_history[-10:]:
-                if msg["role"] == "user":
-                    chat_history.append(HumanMessage(content=msg["content"]))
-                else:
-                    chat_history.append(AIMessage(content=msg["content"]))
+        # Get conversation context - use last 5 messages for better context
+        context = []
+        if "chat_history" in st.session_state:
+            current_conversation = [msg for msg in st.session_state.chat_history 
+                                if msg.get('conversation_id') == st.session_state.conversation_id]
+            
+            for msg in current_conversation[-5:]:
+                if isinstance(msg.get('content'), (str, dict)):
+                    if msg.get('role') == 'user':
+                        context.append(HumanMessage(content=msg['content']))
+                    else:
+                        # For assistant messages, include any structured content
+                        content = msg['content']
+                        if isinstance(content, dict):
+                            content = content.get('answer', str(content))
+                        context.append(AIMessage(content=content))
         
-        # Process query
+        # Add current query to chat history
+        user_message = {
+            'role': 'user',
+            'content': query,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'conversation_id': st.session_state.conversation_id,
+            'session_id': st.session_state.session_id
+        }
+        st.session_state.chat_history.append(user_message)
+        
+        # Get user profile
+        user_profile = UserProfile()
+        user_profile_data = user_profile.get_profile(st.session_state.session_id)
+        
+        # Process query with context
         response = agentic_workflow.run_workflow(
             query=query,
             chat_history=chat_history
