@@ -383,32 +383,35 @@ def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manag
 def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: str, is_follow_up: bool = False):
     """Process user query"""
     try:
-        # Get conversation context - use last 5 messages for better context
-        context = []
-        if "chat_history" in st.session_state:
-            current_conversation = [msg for msg in st.session_state.chat_history 
-                                if msg.get('conversation_id') == st.session_state.conversation_id]
-            
-            for msg in current_conversation[-5:]:
-                if isinstance(msg.get('content'), (str, dict)):
-                    if msg.get('role') == 'user':
-                        context.append(HumanMessage(content=msg['content']))
-                    else:
-                        # For assistant messages, include any structured content
-                        content = msg['content']
-                        if isinstance(content, dict):
-                            content = content.get('answer', str(content))
-                        context.append(AIMessage(content=content))
+        # Initialize chat memory manager
+        chat_memory = ChatMemoryManager()
         
-        # Add current query to chat history
-        user_message = {
-            'role': 'user',
-            'content': query,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'conversation_id': st.session_state.conversation_id,
-            'session_id': st.session_state.session_id
-        }
-        st.session_state.chat_history.append(user_message)
+        # Initialize session and conversation IDs if not exists
+        if "session_id" not in st.session_state:
+            st.session_state.session_id = str(uuid.uuid4())
+            chat_memory.create_session(st.session_state.session_id)
+            
+        if "conversation_id" not in st.session_state:
+            st.session_state.conversation_id = str(uuid.uuid4())
+        
+        # Initialize chat history if not exists
+        if "chat_history" not in st.session_state:
+            st.session_state.chat_history = chat_memory.get_chat_history(st.session_state.session_id) or []
+        
+        # Get conversation context - use last 5 messages for context
+        context = []
+        current_conversation = [msg for msg in st.session_state.chat_history 
+                            if msg.get('conversation_id') == st.session_state.conversation_id]
+        
+        for msg in current_conversation[-5:]:
+            if isinstance(msg.get('content'), (str, dict)):
+                if msg.get('role') == 'user':
+                    context.append(HumanMessage(content=msg['content']))
+                else:
+                    content = msg['content']
+                    if isinstance(content, dict):
+                        content = content.get('response', str(content))
+                    context.append(AIMessage(content=content))
         
         # Get user profile
         user_profile = UserProfile()
@@ -417,25 +420,75 @@ def process_query(query: str, agentic_workflow: AgenticWorkflow, search_depth: s
         # Process query with context
         response = agentic_workflow.run_workflow(
             query=query,
-            chat_history=chat_history
+            chat_history=context,
+            context={
+                "user_profile": user_profile_data,
+                "score_threshold": st.session_state.get("score_threshold", 0.1),
+                "search_depth": search_depth,
+                "is_follow_up": is_follow_up
+            }
         )
         
-        if response:
-            # Add user message to chat history
-            st.session_state.chat_history.append({
-                "role": "user",
-                "content": query,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
+        if not response or not response.get("response"):
+            logger.error("Empty response from workflow")
+            return None
             
-            # Add assistant response to chat history
-            st.session_state.chat_history.append({
-                "role": "assistant",
-                "content": response,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
-            
-            return response
+        # Create user message
+        user_message = {
+            "role": "user",
+            "content": query,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "conversation_id": st.session_state.conversation_id,
+            "session_id": st.session_state.session_id
+        }
+        
+        # Create assistant message
+        assistant_message = {
+            "role": "assistant",
+            "content": response["response"],
+            "sources": response.get("sources", []),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "conversation_id": st.session_state.conversation_id,
+            "session_id": st.session_state.session_id
+        }
+        
+        if response.get("suggested_follow_ups"):
+            assistant_message["suggested_follow_ups"] = response["suggested_follow_ups"]
+        
+        # Update chat history
+        st.session_state.chat_history.append(user_message)
+        st.session_state.chat_history.append(assistant_message)
+        
+        # Save messages to persistent storage
+        chat_memory.save_message(
+            session_id=st.session_state.session_id,
+            conversation_id=st.session_state.conversation_id,
+            message=user_message
+        )
+        
+        chat_memory.save_message(
+            session_id=st.session_state.session_id,
+            conversation_id=st.session_state.conversation_id,
+            message=assistant_message
+        )
+        
+        # Update conversation context
+        chat_memory.update_context(
+            conversation_id=st.session_state.conversation_id,
+            session_id=st.session_state.session_id,
+            topic=response.get("current_topic"),
+            context_data={
+                "last_query": query,
+                "score_threshold": st.session_state.get("score_threshold", 0.1),
+                "user_profile": user_profile_data
+            }
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error processing query: {str(e)}")
+        st.error(f"Error processing query: {str(e)}")
         return None
     except Exception as e:
         logger.error(f"Error processing query: {str(e)}")
