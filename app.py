@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import time
 import logging
+import uuid
 from datetime import datetime
 from typing import List, Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage
@@ -33,6 +34,8 @@ from document_processor import DocumentProcessor
 from vector_store import VectorStoreManager
 from agentic_workflow import AgenticWorkflow
 from chat_interface import handle_chat_interface, add_chat_styles
+from chat_memory_manager import ChatMemoryManager
+from user_profile import UserProfile
 
 # Initialize session state
 def initialize_session_state():
@@ -277,8 +280,8 @@ def process_documents(uploaded_files, doc_processor: DocumentProcessor, vector_s
 def handle_query_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
     """Handle the query interface section of the application"""
     try:
-        # Initialize chat memory and user profile
-        chat_memory = ChatMemory()
+        # Initialize chat memory manager and user profile
+        chat_memory = ChatMemoryManager()
         user_profile = UserProfile()
         
         # Initialize session ID if not exists

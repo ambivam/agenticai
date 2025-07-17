@@ -4,29 +4,51 @@ from langchain_core.messages import HumanMessage, AIMessage
 from agentic_workflow import AgenticWorkflow
 from vector_store import VectorStoreManager
 import logging
-from chat_memory import ChatMemory
+from chat_memory_manager import ChatMemoryManager
 from user_profile import UserProfile
 from datetime import datetime
+import uuid
 
 logger = logging.getLogger(__name__)
 
 def display_chat_message(message: Dict[str, Any], is_user: bool):
     """Display a chat message with appropriate styling"""
-    if is_user:
-        st.markdown(
-            f'<div class="chat-message user-message">👤 You: {message["content"]}</div>',
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            f'<div class="chat-message assistant-message">🤖 Assistant: {message["content"]}</div>',
-            unsafe_allow_html=True
-        )
-        if "sources" in message:
-            with st.expander("View Sources"):
-                for source in message["sources"]:
-                    st.markdown(f"📄 **{source['filename']}**")
-                    st.markdown(f"```\n{source['content']}\n```")
+    try:
+        content = message.get("content", "")
+        if not content:
+            logger.warning("Empty message content")
+            return
+            
+        if is_user:
+            st.markdown(
+                f'<div class="chat-message user-message">👤 You: {content}</div>',
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                f'<div class="chat-message assistant-message">🤖 Assistant: {content}</div>',
+                unsafe_allow_html=True
+            )
+            
+            # Display sources if available
+            sources = message.get("sources", [])
+            if sources:
+                with st.expander("View Sources"):
+                    for source in sources:
+                        filename = source.get("filename", "Unknown source")
+                        content = source.get("content", "No content available")
+                        st.markdown(f"📄 **{filename}**")
+                        st.markdown(f"```\n{content}\n```")
+                        
+            # Display suggested follow-ups if available
+            follow_ups = message.get("suggested_follow_ups", [])
+            if follow_ups:
+                with st.expander("Suggested Follow-up Questions"):
+                    for question in follow_ups:
+                        st.markdown(f"• {question}")
+    except Exception as e:
+        logger.error(f"Error displaying message: {str(e)}")
+        st.error("Error displaying message")
 
 def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manager: VectorStoreManager):
     """Handle the chat interface section of the application"""
@@ -50,20 +72,26 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                 st.session_state.score_threshold = new_threshold
                 st.success(f"✅ Search threshold updated to {new_threshold}")
         
-        # Initialize chat memory and user profile
-        chat_memory = ChatMemory()
+        # Initialize chat memory manager and user profile
+        chat_memory = ChatMemoryManager()
         user_profile = UserProfile()
+        
+        # Initialize conversation ID if not exists
+        if "conversation_id" not in st.session_state:
+            st.session_state.conversation_id = str(uuid.uuid4())
         
         # Initialize session ID in session state if not exists
         if "session_id" not in st.session_state:
             # Generate a more persistent session ID that won't change on reload
-            import uuid
             st.session_state.session_id = str(uuid.uuid4())
         
         # Initialize chat history in session state if not exists
         if "chat_history" not in st.session_state:
-            # Try to load from persistent storage
+            # Create new session and load chat history
+            chat_memory.create_session(st.session_state.session_id)
             st.session_state.chat_history = chat_memory.get_chat_history(st.session_state.session_id)
+            if st.session_state.chat_history is None:
+                st.session_state.chat_history = []
         
         st.subheader("💬 Chat Interface")
         
@@ -75,11 +103,13 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
         # Display chat history
         chat_container = st.container()
         with chat_container:
-            for message in st.session_state.chat_history:
-                display_chat_message(
-                    message,
-                    isinstance(message, dict) and message.get("role") == "user"
-                )
+            if "chat_history" in st.session_state and st.session_state.chat_history:
+                for message in st.session_state.chat_history:
+                    if isinstance(message, dict) and "role" in message and "content" in message:
+                        display_chat_message(
+                            message,
+                            message["role"] == "user"
+                        )
         
         # Chat input
         with st.form(key="chat_form", clear_on_submit=True):
@@ -96,12 +126,6 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                 submit_button = st.form_submit_button("Send")
             
             if submit_button and user_input:
-                # Add user message to chat history
-                st.session_state.chat_history.append({
-                    "role": "user",
-                    "content": user_input,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                })
                 
                 # Extract and update user profile information
                 user_info = user_profile.extract_user_info(user_input)
@@ -124,34 +148,78 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
                     # Get user profile
                     user_profile_data = user_profile.get_profile(st.session_state.session_id)
                     
-                    response = agentic_workflow.run_workflow(
-                        query=user_input,
-                        chat_history=context,
-                        context={
-                            "user_profile": user_profile_data,
-                            "score_threshold": st.session_state.score_threshold
+                    try:
+                        response = agentic_workflow.run_workflow(
+                            query=user_input,
+                            chat_history=context,
+                            context={
+                                "user_profile": user_profile_data,
+                                "score_threshold": st.session_state.score_threshold
+                            }
+                        )
+                        
+                        if not response.get("success"):
+                            error_msg = response.get("error", "Unknown error occurred")
+                            logger.error(f"Workflow error: {error_msg}")
+                            st.error(f"Error processing query: {error_msg}")
+                            return
+                        
+                        if not response.get("response"):
+                            logger.error("Empty response from workflow")
+                            st.error("I couldn't generate a response. Please try again.")
+                            return
+                            
+                        logger.info(f"Got response with {len(response.get('sources', []))} sources")
+                        
+                        # Add messages to chat history and save to storage
+                        user_message = {
+                            "role": "user",
+                            "content": user_input,
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         }
-                    )
-                    
-                    # Add assistant message to chat history
-                    assistant_message = {
-                        "role": "assistant",
-                        "content": response["response"],
-                        "sources": response["sources"],
-                        "timestamp": st.session_state.get("current_time", "")
-                    }
-                    
-                    # If there are suggested follow-ups, add them
-                    if response.get("suggested_follow_ups"):
-                        assistant_message["suggested_follow_ups"] = response["suggested_follow_ups"]
-                    st.session_state.chat_history.append(assistant_message)
-                    
-                    # Save to persistent storage
-                    chat_memory.save_chat_history(
-                        st.session_state.session_id,
-                        st.session_state.chat_history,
-                        metadata={"last_query": user_input}
-                    )
+                        st.session_state.chat_history.append(user_message)
+                        
+                        assistant_message = {
+                            "role": "assistant",
+                            "content": response["response"],
+                            "sources": response.get("sources", []),
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        
+                        if response.get("suggested_follow_ups"):
+                            assistant_message["suggested_follow_ups"] = response["suggested_follow_ups"]
+                        
+                        st.session_state.chat_history.append(assistant_message)
+                        
+                        # Save messages to persistent storage
+                        chat_memory.save_message(
+                            session_id=st.session_state.session_id,
+                            conversation_id=st.session_state.conversation_id,
+                            message=user_message
+                        )
+                        
+                        chat_memory.save_message(
+                            session_id=st.session_state.session_id,
+                            conversation_id=st.session_state.conversation_id,
+                            message=assistant_message
+                        )
+                        
+                        # Update conversation context
+                        chat_memory.update_context(
+                            conversation_id=st.session_state.conversation_id,
+                            session_id=st.session_state.session_id,
+                            topic=response.get("current_topic"),
+                            context_data={
+                                "last_query": user_input,
+                                "score_threshold": st.session_state.score_threshold,
+                                "user_profile": user_profile_data
+                            }
+                        )
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing message: {str(e)}")
+                        st.error(f"An error occurred while processing your message: {str(e)}")
+                        return
                 
                 # Force a rerun to update the chat display
                 st.rerun()
@@ -161,7 +229,9 @@ def handle_chat_interface(agentic_workflow: AgenticWorkflow, vector_store_manage
             if st.button("Clear chat history"):
                 st.session_state.chat_history = []
                 # Clear from persistent storage
-                chat_memory.delete_chat_history(st.session_state.session_id)
+                chat_memory.clear_session_history(st.session_state.session_id)
+                # Reset conversation ID
+                st.session_state.conversation_id = str(uuid.uuid4())
                 st.rerun()
     
     except Exception as e:
