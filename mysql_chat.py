@@ -101,12 +101,22 @@ def natural_to_sql(query):
                         INNER JOIN country co ON c.ID = co.Capital \
                         WHERE co.Code='{country_code}'"
             elif "population" in query:
-                return f"SELECT Name, Population FROM country WHERE Code='{country_code}'"
+                return f"SELECT Name, Population FROM country \
+                        WHERE Code='{country_code}'"
             elif "cities" in query:
                 return f"SELECT Name, Population FROM city \
                         WHERE CountryCode='{country_code}' \
                         ORDER BY Population DESC LIMIT 10"
     return None
+
+def format_population(number):
+    """Format population with proper suffixes (million/billion)"""
+    if number >= 1_000_000_000:
+        return f"{number/1_000_000_000:.2f} billion"
+    elif number >= 1_000_000:
+        return f"{number/1_000_000:.2f} million"
+    else:
+        return f"{number:,}"
 
 def get_sql_response(natural_query):
     try:
@@ -127,10 +137,12 @@ def get_sql_response(natural_query):
             if len(results) == 1:
                 # For single results, return a simple string
                 result = results[0]
-                if 'Name' in result:
+                if 'Name' in result and 'Population' in result:
+                    return f"The population of {result['Name']} is {format_population(result['Population'])}"
+                elif 'Name' in result:
                     return f"The answer is: {result['Name']}"
                 elif 'Population' in result:
-                    return f"The population is: {result['Population']:,}"
+                    return f"The population is {format_population(result['Population'])}"
                 else:
                     return json.dumps(result, indent=2, default=str)
             else:
@@ -138,7 +150,7 @@ def get_sql_response(natural_query):
                 response = "Here are the results:\n"
                 for result in results:
                     if 'Name' in result and 'Population' in result:
-                        response += f"- {result['Name']}: {result['Population']:,} people\n"
+                        response += f"- {result['Name']}: {format_population(result['Population'])}\n"
                     else:
                         response += f"- {json.dumps(result, default=str)}\n"
                 return response
