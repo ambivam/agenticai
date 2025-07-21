@@ -161,8 +161,9 @@ def main():
         handle_document_upload(doc_processor, vector_store_manager)
         
         # Main tabs
-        tab1, tab2, tab3, tab4 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "💬 Chat",
+            "🗄️ SQL Chat",
             "📝 Query Interface",
             "📚 Knowledge Base",
             "⚙️ Settings"
@@ -172,12 +173,16 @@ def main():
             handle_chat_interface(agentic_workflow, vector_store_manager)
         
         with tab2:
-            handle_query_interface(agentic_workflow, vector_store_manager)
+            from mysql_chat import main as mysql_chat_main
+            mysql_chat_main()
         
         with tab3:
-            handle_knowledge_base(vector_store_manager)
+            handle_query_interface(agentic_workflow, vector_store_manager)
         
         with tab4:
+            handle_knowledge_base(vector_store_manager)
+        
+        with tab5:
             handle_settings(vector_store_manager)
         
     except Exception as e:
