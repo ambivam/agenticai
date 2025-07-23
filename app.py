@@ -35,7 +35,9 @@ from vector_store import VectorStoreManager
 from agentic_workflow import AgenticWorkflow
 from chat_interface import handle_chat_interface, add_chat_styles
 from chat_memory_manager import ChatMemoryManager
+from chat_memory_tab import ChatMemoryTab
 from user_profile import UserProfile
+from langchain_openai import ChatOpenAI
 
 # Initialize session state
 def initialize_session_state():
@@ -58,6 +60,14 @@ def initialize_session_state():
         st.session_state.is_follow_up = False
     if 'score_threshold' not in st.session_state:
         st.session_state.score_threshold = 0.1  # Default similarity threshold
+    if 'llm' not in st.session_state:
+        st.session_state.llm = ChatOpenAI(
+            model=Config.OPENAI_MODEL,
+            temperature=0.7,
+            api_key=Config.OPENAI_API_KEY
+        )
+    if 'chat_memory_tab' not in st.session_state:
+        st.session_state.chat_memory_tab = ChatMemoryTab()
 
 def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manager: VectorStoreManager):
     """Handle document upload interface"""
@@ -128,6 +138,12 @@ def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manage
         st.error(f"❌ Document upload interface error: {str(e)}")
         logging.error(f"Document upload interface error: {str(e)}")
 
+def handle_chat_memory():
+    """Handle the chat memory interface"""
+    if 'chat_memory_tab' not in st.session_state:
+        st.session_state.chat_memory_tab = ChatMemoryTab()
+    st.session_state.chat_memory_tab.display_chat_interface()
+
 def main():
     """Main application function"""
     try:
@@ -157,32 +173,33 @@ def main():
             vector_store_manager=vector_store_manager
         )
         
-        # Document upload section (always visible)
-        handle_document_upload(doc_processor, vector_store_manager)
-        
         # Main tabs
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            "📤 Upload",
             "💬 Chat",
-            "🗄️ SQL Chat",
-            "📝 Query Interface",
+            "💭 Memory Chat",
+            "🔍 Query",
             "📚 Knowledge Base",
             "⚙️ Settings"
         ])
         
         with tab1:
-            handle_chat_interface(agentic_workflow, vector_store_manager)
+            handle_document_upload(doc_processor, vector_store_manager)
         
         with tab2:
             from mysql_chat import main as mysql_chat_main
             mysql_chat_main()
         
         with tab3:
-            handle_query_interface(agentic_workflow, vector_store_manager)
+            handle_chat_memory()
         
         with tab4:
-            handle_knowledge_base(vector_store_manager)
+            handle_query_interface(agentic_workflow, vector_store_manager)
         
         with tab5:
+            handle_knowledge_base(vector_store_manager)
+        
+        with tab6:
             handle_settings(vector_store_manager)
         
     except Exception as e:
