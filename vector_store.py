@@ -137,6 +137,21 @@ class VectorStoreManager:
             logger.error(f"Error saving vector store: {str(e)}")
             return False
     
+    def get_all_documents(self) -> List[Document]:
+        """Get all documents from the vector store"""
+        if not self.vector_store:
+            return []
+        try:
+            # Use similarity_search with a generic query to get all documents
+            # Using a high k value to get all documents
+            return self.vector_store.similarity_search(
+                "all documents",
+                k=10000  # Large number to get all docs
+            )
+        except Exception as e:
+            logger.error(f"Error getting all documents: {str(e)}")
+            return []
+
     def load_vector_store(self) -> bool:
         """Load vector store from disk"""
         try:

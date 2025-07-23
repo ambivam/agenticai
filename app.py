@@ -36,6 +36,7 @@ from agentic_workflow import AgenticWorkflow
 from chat_interface import handle_chat_interface, add_chat_styles
 from chat_memory_manager import ChatMemoryManager
 from chat_memory_tab import ChatMemoryTab
+from rag_chat_tab import RagChatTab
 from user_profile import UserProfile
 from langchain_openai import ChatOpenAI
 
@@ -68,6 +69,8 @@ def initialize_session_state():
         )
     if 'chat_memory_tab' not in st.session_state:
         st.session_state.chat_memory_tab = ChatMemoryTab()
+    if 'rag_chat_tab' not in st.session_state:
+        st.session_state.rag_chat_tab = RagChatTab()
 
 def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manager: VectorStoreManager):
     """Handle document upload interface"""
@@ -174,11 +177,12 @@ def main():
         )
         
         # Main tabs
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📤 Upload",
             "💬 Chat",
             "💭 Memory Chat",
-            "🔍 Query",
+            "🔍 RAG Chat",
+            "🔎 Query",
             "📚 Knowledge Base",
             "⚙️ Settings"
         ])
@@ -194,12 +198,32 @@ def main():
             handle_chat_memory()
         
         with tab4:
-            handle_query_interface(agentic_workflow, vector_store_manager)
+            # Handle RAG Chat
+            try:
+                docs = vector_store_manager.get_all_documents()
+                if docs:  # Check if there are actual documents
+                    # Add documents to RAG chat if not already added
+                    if not getattr(st.session_state.rag_chat_tab, 'documents_added', False):
+                        texts = [doc.page_content for doc in docs]
+                        metadatas = [doc.metadata for doc in docs]
+                        if st.session_state.rag_chat_tab.add_documents(texts, metadatas):
+                            st.session_state.rag_chat_tab.documents_added = True
+                            logger.info(f"Added {len(docs)} documents to RAG Chat")
+                    # Display RAG chat interface
+                    st.session_state.rag_chat_tab.display_chat_interface()
+                else:
+                    st.info("ℹ️ The knowledge base is empty. Upload some documents in the Upload tab to start using RAG Chat.")
+            except Exception as e:
+                logger.error(f"Error initializing RAG Chat: {str(e)}")
+                st.error("There was an error loading the knowledge base. Please try uploading your documents again.")
         
         with tab5:
-            handle_knowledge_base(vector_store_manager)
+            handle_query_interface(agentic_workflow, vector_store_manager)
         
         with tab6:
+            handle_knowledge_base(vector_store_manager)
+        
+        with tab7:
             handle_settings(vector_store_manager)
         
     except Exception as e:
