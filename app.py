@@ -6,6 +6,16 @@ import uuid
 from datetime import datetime
 from typing import List, Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.documents import Document
+
+# Import custom modules first
+from config import Config
+from utils import (
+    create_custom_css, create_sidebar_info,
+    display_success_message, display_error_message, display_warning_message,
+    validate_file_upload, format_sources, format_file_size,
+    get_file_type
+)
 
 # Configure logging
 logging.basicConfig(
@@ -14,21 +24,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Set page config first
+# Set page config first - this must be the first Streamlit command
 st.set_page_config(
-    page_title="🤖 Agentic RAG Assistant",
-    page_icon="🤖",
-    layout="wide",
+    page_title=Config.PAGE_TITLE,
+    page_icon=Config.PAGE_ICON,
+    layout=Config.LAYOUT,
     initial_sidebar_state="expanded"
-)
-
-# Import custom modules
-from config import Config
-from utils import (
-    create_custom_css, create_sidebar_info,
-    display_success_message, display_error_message, display_warning_message,
-    validate_file_upload, format_sources, format_file_size,
-    get_file_type
 )
 from document_processor import DocumentProcessor
 from vector_store import VectorStoreManager
@@ -164,9 +165,147 @@ def handle_chat_memory():
         st.session_state.chat_memory_tab = ChatMemoryTab()
     st.session_state.chat_memory_tab.display_chat_interface()
 
-def main():
-    """Main application function"""
+def handle_rag_chat(vector_store_manager: VectorStoreManager):
+    """Handle RAG Chat tab interface"""
     try:
+        # Initialize RAG Chat tab if needed
+        if 'rag_chat_tab' not in st.session_state:
+            st.session_state.rag_chat_tab = RagChatTab()
+            logger.info("Initialized new RAG Chat tab")
+
+        # Get current document count and files
+        store_info = vector_store_manager.get_store_info()
+        current_files = store_info.get("files", [])
+        current_doc_count = len(current_files)
+
+        # Check if we need to sync documents
+        if not hasattr(st.session_state.rag_chat_tab, 'doc_count') or current_doc_count != st.session_state.rag_chat_tab.doc_count:
+            logger.info(f"Document count changed from {getattr(st.session_state.rag_chat_tab, 'doc_count', 0)} to {current_doc_count}. Syncing documents...")
+            
+            try:
+                # Get all documents from vector store
+                docs = vector_store_manager.get_all_documents()
+                if docs:
+                    # Clear existing documents in RAG Chat tab
+                    st.session_state.rag_chat_tab = RagChatTab()
+                    
+                    # Add documents to RAG Chat tab with enriched metadata
+                    texts = []
+                    metadatas = []
+                    
+                    for doc in docs:
+                        if isinstance(doc, Document):
+                            texts.append(doc.page_content)
+                            source = doc.metadata.get("source", "Unknown")
+                            metadata = {
+                                "source": source,
+                                "source_lower": source.lower(),
+                                "file_type": doc.metadata.get("file_type", ""),
+                                "timestamp": datetime.now().isoformat(),
+                                "chunk_id": str(uuid.uuid4())
+                            }
+                            metadatas.append(metadata)
+                    
+                    # Add documents to RAG Chat tab
+                    if texts and metadatas:
+                        st.session_state.rag_chat_tab.add_documents(texts, metadatas)
+                        
+                        # Update document count and sources
+                        st.session_state.rag_chat_tab.doc_count = current_doc_count
+                        st.session_state.rag_chat_tab.document_sources = set(current_files)
+                        logger.info(f"Successfully synced {len(texts)} documents to RAG Chat tab")
+                        logger.info(f"Available sources: {st.session_state.rag_chat_tab.document_sources}")
+                    else:
+                        logger.warning("No valid documents found to sync")
+                else:
+                    # No documents in store, reset RAG Chat tab
+                    st.session_state.rag_chat_tab = RagChatTab()
+                    logger.warning("No documents found in vector store, reset RAG Chat tab")
+            except Exception as e:
+                logger.error(f"Error syncing documents: {str(e)}")
+                st.error(f"Error syncing documents: {str(e)}")
+                return
+
+        # Display chat interface
+        st.session_state.rag_chat_tab.display_chat_interface()
+
+    except Exception as e:
+        logger.error(f"Error in RAG Chat tab: {str(e)}")
+        st.error(f"Error: {str(e)}")
+        
+        # Chat input
+        if query := st.chat_input("Ask a question about your documents..."):
+            # Process query
+            try:
+                result = st.session_state.rag_chat_tab.process_query(query, st.session_state.rag_chat_history)
+                
+                # Add to chat history
+                st.session_state.rag_chat_history.append({"role": "user", "content": query})
+                st.session_state.rag_chat_history.append({"role": "assistant", "content": result["response"]})
+                
+                # Display sources if available
+                if result.get("sources"):
+                    with st.expander("📚 Source Documents"):
+                        st.write("\n".join(result["sources"]))
+                        
+            except Exception as e:
+                st.error(f"Error processing query: {str(e)}")
+                logger.error(f"Query processing error: {str(e)}")
+        
+        # Display chat history
+        for message in st.session_state.rag_chat_history:
+            with st.chat_message(message["role"]):
+                st.write(message["content"])
+        
+    except Exception as e:
+        st.error("There was an error loading the knowledge base. Please try uploading your documents again.")
+        logger.error(f"RAG Chat error: {str(e)}")
+
+def main():
+    """Main application entry point"""
+    try:
+        # Validate OpenAI API key
+        if not Config.OPENAI_API_KEY:
+            st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+            return
+        
+        # Initialize components with error handling
+        try:
+            doc_processor = DocumentProcessor(
+                chunk_size=Config.CHUNK_SIZE,
+                chunk_overlap=Config.CHUNK_OVERLAP
+            )
+            logger.info("Successfully initialized document processor")
+            
+            vector_store_manager = VectorStoreManager(
+                openai_api_key=Config.OPENAI_API_KEY,
+                vector_db_path=Config.VECTOR_DB_PATH
+            )
+            logger.info("Successfully initialized vector store manager")
+            
+            agentic_workflow = AgenticWorkflow(
+                openai_api_key=Config.OPENAI_API_KEY,
+                vector_store_manager=vector_store_manager
+            )
+            logger.info("Successfully initialized agentic workflow")
+        except Exception as e:
+            st.error(f"Error initializing components: {str(e)}")
+            logger.error(f"Component initialization failed: {str(e)}")
+            return
+        
+        # Initialize session state
+        if "uploaded_files" not in st.session_state:
+            st.session_state.uploaded_files = []
+            
+        if "rag_chat_tab" not in st.session_state:
+            try:
+                st.session_state.rag_chat_tab = RagChatTab()
+                logger.info("Successfully initialized RAG Chat tab")
+            except Exception as e:
+                st.error(f"Error initializing RAG Chat tab: {str(e)}")
+                logger.error(f"RAG Chat tab initialization failed: {str(e)}")
+                return
+        
         # Initialize session state
         initialize_session_state()
         
@@ -176,22 +315,6 @@ def main():
         
         # Create sidebar
         create_sidebar_info()
-        
-        # Initialize components
-        doc_processor = DocumentProcessor(
-            chunk_size=Config.CHUNK_SIZE,
-            chunk_overlap=Config.CHUNK_OVERLAP
-        )
-        
-        vector_store_manager = VectorStoreManager(
-            openai_api_key=Config.OPENAI_API_KEY,
-            vector_db_path=Config.VECTOR_DB_PATH
-        )
-        
-        agentic_workflow = AgenticWorkflow(
-            openai_api_key=Config.OPENAI_API_KEY,
-            vector_store_manager=vector_store_manager
-        )
         
         # Main tabs
         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -204,6 +327,7 @@ def main():
             "⚙️ Settings"
         ])
         
+        # Handle each tab
         with tab1:
             handle_document_upload(doc_processor, vector_store_manager)
         
@@ -215,24 +339,7 @@ def main():
             handle_chat_memory()
         
         with tab4:
-            # Handle RAG Chat
-            try:
-                docs = vector_store_manager.get_all_documents()
-                if docs:  # Check if there are actual documents
-                    # Add documents to RAG chat if not already added
-                    if not getattr(st.session_state.rag_chat_tab, 'documents_added', False):
-                        texts = [doc.page_content for doc in docs]
-                        metadatas = [doc.metadata for doc in docs]
-                        if st.session_state.rag_chat_tab.add_documents(texts, metadatas):
-                            st.session_state.rag_chat_tab.documents_added = True
-                            logger.info(f"Added {len(docs)} documents to RAG Chat")
-                    # Display RAG chat interface
-                    st.session_state.rag_chat_tab.display_chat_interface()
-                else:
-                    st.info("ℹ️ The knowledge base is empty. Upload some documents in the Upload tab to start using RAG Chat.")
-            except Exception as e:
-                logger.error(f"Error initializing RAG Chat: {str(e)}")
-                st.error("There was an error loading the knowledge base. Please try uploading your documents again.")
+            handle_rag_chat(vector_store_manager)
         
         with tab5:
             handle_query_interface(agentic_workflow, vector_store_manager)
