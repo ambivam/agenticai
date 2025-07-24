@@ -16,12 +16,26 @@ logger = logging.getLogger(__name__)
 
 class ChatMemoryTab:
     def __init__(self):
+        # Initialize memory store with OpenAI embeddings
+        self.embeddings = OpenAIEmbeddings()
         self.memory_store = FAISS.from_texts(
             ["Initial memory context"], 
-            OpenAIEmbeddings(),
-            metadatas=[{"type": "system", "timestamp": datetime.now().isoformat()}]
+            self.embeddings,
+            metadatas=[{
+                "type": "system", 
+                "source": "initialization",
+                "timestamp": datetime.now().isoformat()
+            }]
         )
+        
+        # Initialize the chat graph for conversation flow
         self._setup_chat_graph()
+        
+        # Ensure session state is initialized
+        if 'memory_chat_history' not in st.session_state:
+            st.session_state.memory_chat_history = []
+        if 'messages' not in st.session_state:
+            st.session_state.messages = []
 
     def _setup_chat_graph(self):
         # Define the chat prompt template with better context handling
@@ -129,15 +143,11 @@ class ChatMemoryTab:
                 help="Number of previous conversations to consider for context"
             )
 
-        # Initialize session state for chat history
-        if "memory_chat_history" not in st.session_state:
-            st.session_state.memory_chat_history = []
-
-        # Display chat history with improved formatting
+        # Display chat history
         for message in st.session_state.memory_chat_history:
             with st.chat_message(message["role"]):
                 st.write(message["content"])
-                if message["role"] == "assistant" and "context" in message and message["context"].strip():
+                if message["role"] == "assistant" and "context" in message:
                     with st.expander("🧠 View Memory Context"):
                         context_lines = message["context"].split("\n")
                         for line in context_lines:

@@ -43,30 +43,47 @@ from langchain_openai import ChatOpenAI
 # Initialize session state
 def initialize_session_state():
     """Initialize session state variables"""
+    # Chat history and messages for different chat interfaces
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+    if 'memory_chat_history' not in st.session_state:
+        st.session_state.memory_chat_history = []
+    if 'rag_chat_history' not in st.session_state:
+        st.session_state.rag_chat_history = []
+    
+    # Vector store and document processing states
     if 'vector_store_initialized' not in st.session_state:
         st.session_state.vector_store_initialized = False
     if 'documents_processed' not in st.session_state:
         st.session_state.documents_processed = []
+    
+    # Query and response states
     if 'show_response' not in st.session_state:
         st.session_state.show_response = False
     if 'current_query' not in st.session_state:
         st.session_state.current_query = None
-    if 'uploaded_files' not in st.session_state:
-        st.session_state.uploaded_files = None
     if 'query_submitted' not in st.session_state:
         st.session_state.query_submitted = False
     if 'is_follow_up' not in st.session_state:
         st.session_state.is_follow_up = False
+    
+    # Configuration states
     if 'score_threshold' not in st.session_state:
         st.session_state.score_threshold = 0.1  # Default similarity threshold
+    if 'uploaded_files' not in st.session_state:
+        st.session_state.uploaded_files = None
+    
+    # LLM and chat components
     if 'llm' not in st.session_state:
         st.session_state.llm = ChatOpenAI(
             model=Config.OPENAI_MODEL,
             temperature=0.7,
             api_key=Config.OPENAI_API_KEY
         )
+    
+    # Initialize chat tabs
     if 'chat_memory_tab' not in st.session_state:
         st.session_state.chat_memory_tab = ChatMemoryTab()
     if 'rag_chat_tab' not in st.session_state:
