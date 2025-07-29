@@ -13,6 +13,9 @@ class Config:
     OPENAI_BASE_URL = "https://api.openai.com/v1"  # Default OpenAI API endpoint
     OPENAI_MODEL = "gpt-4-1106-preview"
     OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+
+    # SERPAPI Configuration
+    SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
     
     # Langchain Configuration
     LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")

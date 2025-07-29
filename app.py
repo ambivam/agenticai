@@ -38,6 +38,7 @@ from chat_interface import handle_chat_interface, add_chat_styles
 from chat_memory_manager import ChatMemoryManager
 from chat_memory_tab import ChatMemoryTab
 from rag_chat_tab import RagChatTab
+from search_chat_tab import SearchChatTab
 from user_profile import UserProfile
 from langchain_openai import ChatOpenAI
 
@@ -89,6 +90,8 @@ def initialize_session_state():
         st.session_state.chat_memory_tab = ChatMemoryTab()
     if 'rag_chat_tab' not in st.session_state:
         st.session_state.rag_chat_tab = RagChatTab()
+    if 'search_chat_tab' not in st.session_state:
+        st.session_state.search_chat_tab = SearchChatTab()
 
 def handle_document_upload(doc_processor: DocumentProcessor, vector_store_manager: VectorStoreManager):
     """Handle document upload interface"""
@@ -317,12 +320,13 @@ def main():
         create_sidebar_info()
         
         # Main tabs
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
             "📤 Upload",
             "💬 Chat",
             "💭 Memory Chat",
             "🔍 RAG Chat",
             "🔎 Query",
+            "🔏 Search Chat",
             "📚 Knowledge Base",
             "⚙️ Settings"
         ])
@@ -345,9 +349,12 @@ def main():
             handle_query_interface(agentic_workflow, vector_store_manager)
         
         with tab6:
-            handle_knowledge_base(vector_store_manager)
+            st.session_state.search_chat_tab.handle_chat(st.session_state.llm)
         
         with tab7:
+            handle_knowledge_base(vector_store_manager)
+        
+        with tab8:
             handle_settings(vector_store_manager)
         
     except Exception as e:
